@@ -4,7 +4,7 @@ pub(super) struct RuneUpdater<'a, 'tx, 'client> {
   pub(super) block_time: u32,
   pub(super) burned: HashMap<RuneId, Lot>,
   pub(super) client: &'client Client,
-  pub(super) event_sender: Option<&'a Sender<Event>>,
+  pub(super) event_sender: Option<&'a mpsc::Sender<Event>>,
   pub(super) height: u32,
   pub(super) id_to_entry: &'a mut Table<'tx, RuneIdValue, RuneEntryValue>,
   pub(super) inscription_id_to_sequence_number: &'a Table<'tx, InscriptionIdValue, u32>,
@@ -89,22 +89,24 @@ impl<'a, 'tx, 'client> RuneUpdater<'a, 'tx, 'client> {
               })
               .collect::<Vec<usize>>();
 
-            if amount == 0 {
-              // if amount is zero, divide balance between eligible outputs
-              let amount = *balance / destinations.len() as u128;
-              let remainder = usize::try_from(*balance % destinations.len() as u128).unwrap();
+            if !destinations.is_empty() {
+              if amount == 0 {
+                // if amount is zero, divide balance between eligible outputs
+                let amount = *balance / destinations.len() as u128;
+                let remainder = usize::try_from(*balance % destinations.len() as u128).unwrap();
 
-              for (i, output) in destinations.iter().enumerate() {
-                allocate(
-                  balance,
-                  if i < remainder { amount + 1 } else { amount },
-                  *output,
-                );
-              }
-            } else {
-              // if amount is non-zero, distribute amount to eligible outputs
-              for output in destinations {
-                allocate(balance, amount.min(*balance), output);
+                for (i, output) in destinations.iter().enumerate() {
+                  allocate(
+                    balance,
+                    if i < remainder { amount + 1 } else { amount },
+                    *output,
+                  );
+                }
+              } else {
+                // if amount is non-zero, distribute amount to eligible outputs
+                for output in destinations {
+                  allocate(balance, amount.min(*balance), output);
+                }
               }
             }
           } else {
@@ -140,8 +142,7 @@ impl<'a, 'tx, 'client> RuneUpdater<'a, 'tx, 'client> {
         .unwrap_or_default();
 
       // assign all un-allocated runes to the default output, or the first non
-      // OP_RETURN output if there is no default, or if the default output is
-      // too large
+      // OP_RETURN output if there is no default
       if let Some(vout) = pointer
         .map(|pointer| pointer.into_usize())
         .inspect(|&pointer| assert!(pointer < allocated.len()))

@@ -68,7 +68,7 @@ mod tests {
           <dt>reveal transaction</dt>
           <dd><a class=monospace href=/tx/1{64}>1{64}</a></dd>
           <dt>location</dt>
-          <dd class=monospace>1{64}:1:0</dd>
+          <dd><a class=monospace href=/satpoint/1{64}:1:0>1{64}:1:0</a></dd>
           <dt>output</dt>
           <dd><a class=monospace href=/output/1{64}:1>1{64}:1</a></dd>
           <dt>offset</dt>
@@ -94,7 +94,7 @@ mod tests {
         ..default()
       },
       "
-        <h1>Inscription 1</h1>
+        .*<h1>Inscription 1</h1>
         <div class=inscription>
         <div>❮</div>
         <iframe .* src=/preview/1{64}i1></iframe>
@@ -103,7 +103,7 @@ mod tests {
         <dl>
           .*
           <dt>address</dt>
-          <dd class=monospace>bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4</dd>
+          <dd class=monospace><a href=/address/bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4>bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4</a></dd>
           <dt>value</dt>
           <dd>1</dd>
           .*
@@ -133,6 +133,8 @@ mod tests {
           .*
           <dt>sat</dt>
           <dd><a href=/sat/1>1</a></dd>
+          <dt>sat name</dt>
+          <dd><a href=/sat/nvtdijuwxlo>nvtdijuwxlo</a></dd>
           <dt>preview</dt>
           .*
         </dl>
@@ -191,7 +193,7 @@ mod tests {
         <dl>
           .*
           <dt>location</dt>
-          <dd class=monospace>0{64}:0:0</dd>
+          <dd><a class=monospace href=/satpoint/0{64}:0:0>0{64}:0:0</a></dd>
           <dt>output</dt>
           <dd><a class=monospace href=/output/0{64}:0>0{64}:0</a></dd>
           .*
@@ -249,7 +251,7 @@ mod tests {
           <dt>reveal transaction</dt>
           <dd><a class=monospace href=/tx/1{64}>1{64}</a></dd>
           <dt>location</dt>
-          <dd class=monospace>1{64}:1:0</dd>
+          <dd><a class=monospace href=/satpoint/1{64}:1:0>1{64}:1:0</a></dd>
           <dt>output</dt>
           <dd><a class=monospace href=/output/1{64}:1>1{64}:1</a></dd>
           <dt>offset</dt>
@@ -311,7 +313,7 @@ mod tests {
           <dt>reveal transaction</dt>
           <dd><a class=monospace href=/tx/1{64}>1{64}</a></dd>
           <dt>location</dt>
-          <dd class=monospace>1{64}:1:0</dd>
+          <dd><a class=monospace href=/satpoint/1{64}:1:0>1{64}:1:0</a></dd>
           <dt>output</dt>
           <dd><a class=monospace href=/output/1{64}:1>1{64}:1</a></dd>
           <dt>offset</dt>
@@ -372,7 +374,7 @@ mod tests {
           <dt>reveal transaction</dt>
           <dd><a class=monospace href=/tx/1{64}>1{64}</a></dd>
           <dt>location</dt>
-          <dd class=monospace>1{64}:1:0</dd>
+          <dd><a class=monospace href=/satpoint/1{64}:1:0>1{64}:1:0</a></dd>
           <dt>output</dt>
           <dd><a class=monospace href=/output/1{64}:1>1{64}:1</a></dd>
           <dt>offset</dt>

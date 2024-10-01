@@ -7,7 +7,7 @@ use {
     bip32::{ChildNumber, DerivationPath, ExtendedPrivKey, Fingerprint},
     psbt::Psbt,
   },
-  bitcoincore_rpc::bitcoincore_rpc_json::{Descriptor, ImportDescriptors, Timestamp},
+  bitcoincore_rpc::bitcoincore_rpc_json::{ImportDescriptors, Timestamp},
   entry::{EtchingEntry, EtchingEntryValue},
   fee_rate::FeeRate,
   index::entry::Entry,
@@ -47,6 +47,31 @@ impl From<Statistic> for u64 {
   }
 }
 
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+pub struct Descriptor {
+  pub desc: String,
+  pub timestamp: bitcoincore_rpc::bitcoincore_rpc_json::Timestamp,
+  pub active: bool,
+  pub internal: Option<bool>,
+  pub range: Option<(u64, u64)>,
+  pub next: Option<u64>,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+pub struct ListDescriptorsResult {
+  pub wallet_name: String,
+  pub descriptors: Vec<Descriptor>,
+}
+
+#[derive(Debug, PartialEq)]
+pub(crate) enum Maturity {
+  BelowMinimumHeight(u64),
+  CommitNotFound,
+  CommitSpent(Txid),
+  ConfirmationsPending(u32),
+  Mature,
+}
+
 pub(crate) struct Wallet {
   bitcoin_client: Client,
   database: Database,
@@ -63,7 +88,7 @@ pub(crate) struct Wallet {
 }
 
 impl Wallet {
-  pub(crate) fn get_output_sat_ranges(&self) -> Result<Vec<(OutPoint, Vec<(u64, u64)>)>> {
+  pub(crate) fn get_wallet_sat_ranges(&self) -> Result<Vec<(OutPoint, Vec<(u64, u64)>)>> {
     ensure!(
       self.has_sat_index,
       "ord index must be built with `--index-sats` to use `--sat`"
@@ -79,6 +104,23 @@ impl Wallet {
     }
 
     Ok(output_sat_ranges)
+  }
+
+  pub(crate) fn get_output_sat_ranges(&self, output: &OutPoint) -> Result<Vec<(u64, u64)>> {
+    ensure!(
+      self.has_sat_index,
+      "ord index must be built with `--index-sats` to see sat ranges"
+    );
+
+    if let Some(info) = self.output_info.get(output) {
+      if let Some(sat_ranges) = &info.sat_ranges {
+        Ok(sat_ranges.clone())
+      } else {
+        bail!("output {output} in wallet but is spent according to ord server");
+      }
+    } else {
+      bail!("output {output} not found in wallet");
+    }
   }
 
   pub(crate) fn find_sat_in_outputs(&self, sat: Sat) -> Result<SatPoint> {
@@ -174,18 +216,16 @@ impl Wallet {
     )
   }
 
-  pub(crate) fn get_parent_info(
-    &self,
-    parent: Option<InscriptionId>,
-  ) -> Result<Option<ParentInfo>> {
-    if let Some(parent_id) = parent {
-      if !self.inscription_exists(parent_id)? {
+  pub(crate) fn get_parent_info(&self, parents: &[InscriptionId]) -> Result<Vec<ParentInfo>> {
+    let mut parent_info = Vec::new();
+    for parent_id in parents {
+      if !self.inscription_exists(*parent_id)? {
         return Err(anyhow!("parent {parent_id} does not exist"));
       }
 
       let satpoint = self
         .inscription_info
-        .get(&parent_id)
+        .get(parent_id)
         .ok_or_else(|| anyhow!("parent {parent_id} not in wallet"))?
         .satpoint;
 
@@ -195,15 +235,15 @@ impl Wallet {
         .ok_or_else(|| anyhow!("parent {parent_id} not in wallet"))?
         .clone();
 
-      Ok(Some(ParentInfo {
+      parent_info.push(ParentInfo {
         destination: self.get_change_address()?,
-        id: parent_id,
+        id: *parent_id,
         location: satpoint,
         tx_out,
-      }))
-    } else {
-      Ok(None)
+      });
     }
+
+    Ok(parent_info)
   }
 
   pub(crate) fn get_runic_outputs(&self) -> Result<BTreeSet<OutPoint>> {
@@ -217,10 +257,10 @@ impl Wallet {
     Ok(runic_outputs)
   }
 
-  pub(crate) fn get_runes_balances_for_output(
+  pub(crate) fn get_runes_balances_in_output(
     &self,
     output: &OutPoint,
-  ) -> Result<Vec<(SpacedRune, Pile)>> {
+  ) -> Result<BTreeMap<SpacedRune, Pile>> {
     Ok(
       self
         .output_info
@@ -228,22 +268,6 @@ impl Wallet {
         .ok_or(anyhow!("output not found in wallet"))?
         .runes
         .clone(),
-    )
-  }
-
-  pub(crate) fn get_rune_balance_in_output(&self, output: &OutPoint, rune: Rune) -> Result<u128> {
-    Ok(
-      self
-        .get_runes_balances_for_output(output)?
-        .iter()
-        .map(|(spaced_rune, pile)| {
-          if spaced_rune.rune == rune {
-            pile.amount
-          } else {
-            0
-          }
-        })
-        .sum(),
     )
   }
 
@@ -296,44 +320,87 @@ impl Wallet {
     self.settings.integration_test()
   }
 
-  pub(crate) fn wait_for_maturation(
-    &self,
-    rune: &Rune,
-    commit: Transaction,
-    reveal: Transaction,
-    output: batch::Output,
-  ) -> Result<batch::Output> {
-    eprintln!("Waiting for rune commitment {} to mature…", commit.txid());
+  fn is_above_minimum_at_height(&self, rune: Rune) -> Result<bool> {
+    Ok(
+      rune
+        >= Rune::minimum_at_height(
+          self.chain().network(),
+          Height(u32::try_from(self.bitcoin_client().get_block_count()? + 1).unwrap()),
+        ),
+    )
+  }
 
-    self.save_etching(rune, &commit, &reveal, output.clone())?;
+  pub(crate) fn check_maturity(&self, rune: Rune, commit: &Transaction) -> Result<Maturity> {
+    Ok(
+      if let Some(commit_tx) = self
+        .bitcoin_client()
+        .get_transaction(&commit.txid(), Some(true))
+        .into_option()?
+      {
+        let current_confirmations = u32::try_from(commit_tx.info.confirmations)?;
+        if self
+          .bitcoin_client()
+          .get_tx_out(&commit.txid(), 0, Some(true))?
+          .is_none()
+        {
+          Maturity::CommitSpent(commit_tx.info.txid)
+        } else if !self.is_above_minimum_at_height(rune)? {
+          Maturity::BelowMinimumHeight(self.bitcoin_client().get_block_count()? + 1)
+        } else if current_confirmations + 1 < Runestone::COMMIT_CONFIRMATIONS.into() {
+          Maturity::ConfirmationsPending(
+            u32::from(Runestone::COMMIT_CONFIRMATIONS) - current_confirmations - 1,
+          )
+        } else {
+          Maturity::Mature
+        }
+      } else {
+        Maturity::CommitNotFound
+      },
+    )
+  }
+
+  pub(crate) fn wait_for_maturation(&self, rune: Rune) -> Result<batch::Output> {
+    let Some(entry) = self.load_etching(rune)? else {
+      bail!("no etching found");
+    };
+
+    eprintln!(
+      "Waiting for rune {} commitment {} to mature…",
+      rune,
+      entry.commit.txid()
+    );
+
+    let mut pending_confirmations: u32 = Runestone::COMMIT_CONFIRMATIONS.into();
+
+    let progress = ProgressBar::new(pending_confirmations.into()).with_style(
+      ProgressStyle::default_bar()
+        .template("Maturing in...[{eta}] {spinner:.green} [{bar:40.cyan/blue}] {pos}/{len}")
+        .unwrap()
+        .progress_chars("█▓▒░ "),
+    );
 
     loop {
       if SHUTTING_DOWN.load(atomic::Ordering::Relaxed) {
         eprintln!("Suspending batch. Run `ord wallet resume` to continue.");
-        return Ok(output);
+        return Ok(entry.output);
       }
 
-      let transaction = self
-        .bitcoin_client()
-        .get_transaction(&commit.txid(), Some(true))
-        .into_option()?;
-
-      if let Some(transaction) = transaction {
-        if u32::try_from(transaction.info.confirmations).unwrap() + 1
-          >= Runestone::COMMIT_CONFIRMATIONS.into()
-        {
-          let tx_out = self
-            .bitcoin_client()
-            .get_tx_out(&commit.txid(), 0, Some(true))?;
-
-          if let Some(tx_out) = tx_out {
-            if tx_out.confirmations + 1 >= Runestone::COMMIT_CONFIRMATIONS.into() {
-              break;
-            }
-          } else {
-            bail!("rune commitment spent, can't send reveal tx");
+      match self.check_maturity(rune, &entry.commit)? {
+        Maturity::Mature => {
+          progress.finish_with_message("Rune matured, submitting...");
+          break;
+        }
+        Maturity::ConfirmationsPending(remaining) => {
+          if remaining < pending_confirmations {
+            pending_confirmations = remaining;
+            progress.inc(1);
           }
         }
+        Maturity::CommitSpent(txid) => {
+          self.clear_etching(rune)?;
+          bail!("rune commitment {} spent, can't send reveal tx", txid);
+        }
+        _ => {}
       }
 
       if !self.integration_test() {
@@ -341,12 +408,16 @@ impl Wallet {
       }
     }
 
-    match self.bitcoin_client().send_raw_transaction(&reveal) {
+    self.send_etching(rune, &entry)
+  }
+
+  pub(crate) fn send_etching(&self, rune: Rune, entry: &EtchingEntry) -> Result<batch::Output> {
+    match self.bitcoin_client().send_raw_transaction(&entry.reveal) {
       Ok(txid) => txid,
       Err(err) => {
         return Err(anyhow!(
           "Failed to send reveal transaction: {err}\nCommit tx {} will be recovered once mined",
-          commit.txid()
+          entry.commit.txid()
         ))
       }
     };
@@ -355,7 +426,7 @@ impl Wallet {
 
     Ok(batch::Output {
       reveal_broadcast: true,
-      ..output
+      ..entry.output.clone()
     })
   }
 
@@ -408,7 +479,7 @@ impl Wallet {
       })
       .collect::<Vec<ImportDescriptors>>();
 
-    client.import_descriptors(descriptors)?;
+    client.call::<serde_json::Value>("importdescriptors", &[serde_json::to_value(descriptors)?])?;
 
     Ok(())
   }
@@ -479,7 +550,7 @@ impl Wallet {
 
     settings
       .bitcoin_rpc_client(Some(name.clone()))?
-      .import_descriptors(vec![ImportDescriptors {
+      .import_descriptors(ImportDescriptors {
         descriptor: descriptor.to_string_with_secret(&key_map),
         timestamp: Timestamp::Now,
         active: Some(true),
@@ -487,7 +558,7 @@ impl Wallet {
         next_index: None,
         internal: Some(change),
         label: None,
-      }])?;
+      })?;
 
     Ok(())
   }
@@ -517,7 +588,10 @@ impl Wallet {
   }
 
   pub(crate) fn open_database(wallet_name: &String, settings: &Settings) -> Result<Database> {
-    let path = settings.data_dir().join(format!("{wallet_name}.redb"));
+    let path = settings
+      .data_dir()
+      .join("wallets")
+      .join(format!("{wallet_name}.redb"));
 
     if let Err(err) = fs::create_dir_all(path.parent().unwrap()) {
       bail!(
@@ -643,7 +717,7 @@ impl Wallet {
     )
   }
 
-  pub(crate) fn clear_etching(&self, rune: &Rune) -> Result {
+  pub(crate) fn clear_etching(&self, rune: Rune) -> Result {
     let wtx = self.database.begin_write()?;
 
     wtx.open_table(RUNE_TO_ETCHING)?.remove(rune.0)?;
@@ -664,5 +738,64 @@ impl Wallet {
         })
         .collect::<Result<Vec<(Rune, EtchingEntry)>, StorageError>>()?,
     )
+  }
+
+  pub(super) fn sign_transaction(
+    &self,
+    unsigned_transaction: Transaction,
+    dry_run: bool,
+  ) -> Result<(Txid, String, u64)> {
+    let unspent_outputs = self.utxos();
+
+    let (txid, psbt) = if dry_run {
+      let psbt = self
+        .bitcoin_client()
+        .wallet_process_psbt(
+          &base64::engine::general_purpose::STANDARD
+            .encode(Psbt::from_unsigned_tx(unsigned_transaction.clone())?.serialize()),
+          Some(false),
+          None,
+          None,
+        )?
+        .psbt;
+
+      (unsigned_transaction.txid(), psbt)
+    } else {
+      let psbt = self
+        .bitcoin_client()
+        .wallet_process_psbt(
+          &base64::engine::general_purpose::STANDARD
+            .encode(Psbt::from_unsigned_tx(unsigned_transaction.clone())?.serialize()),
+          Some(true),
+          None,
+          None,
+        )?
+        .psbt;
+
+      let signed_tx = self
+        .bitcoin_client()
+        .finalize_psbt(&psbt, None)?
+        .hex
+        .ok_or_else(|| anyhow!("unable to sign transaction"))?;
+
+      (
+        self.bitcoin_client().send_raw_transaction(&signed_tx)?,
+        psbt,
+      )
+    };
+
+    let mut fee = 0;
+    for txin in unsigned_transaction.input.iter() {
+      let Some(txout) = unspent_outputs.get(&txin.previous_output) else {
+        panic!("input {} not found in utxos", txin.previous_output);
+      };
+      fee += txout.value;
+    }
+
+    for txout in unsigned_transaction.output.iter() {
+      fee = fee.checked_sub(txout.value).unwrap();
+    }
+
+    Ok((txid, psbt, fee))
   }
 }

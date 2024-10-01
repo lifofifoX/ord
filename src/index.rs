@@ -8,6 +8,7 @@ use {
     lot::Lot,
     reorg::Reorg,
     updater::Updater,
+    utxo_entry::{ParsedUtxoEntry, UtxoEntry, UtxoEntryBuf},
   },
   super::*,
   crate::{
@@ -44,24 +45,23 @@ mod lot;
 mod reorg;
 mod rtx;
 mod updater;
+mod utxo_entry;
 
 #[cfg(test)]
 pub(crate) mod testing;
 
-const SCHEMA_VERSION: u64 = 25;
+const SCHEMA_VERSION: u64 = 28;
 
-define_multimap_table! { SATPOINT_TO_SEQUENCE_NUMBER, &SatPointValue, u32 }
 define_multimap_table! { SAT_TO_SEQUENCE_NUMBER, u64, u32 }
 define_multimap_table! { SEQUENCE_NUMBER_TO_CHILDREN, u32, u32 }
-define_table! { CONTENT_TYPE_TO_COUNT, Option<&[u8]>, u64 }
+define_multimap_table! { SCRIPT_PUBKEY_TO_OUTPOINT, &[u8], OutPointValue }
 define_table! { HEIGHT_TO_BLOCK_HEADER, u32, &HeaderValue }
 define_table! { HEIGHT_TO_LAST_SEQUENCE_NUMBER, u32, u32 }
 define_table! { HOME_INSCRIPTIONS, u32, InscriptionIdValue }
 define_table! { INSCRIPTION_ID_TO_SEQUENCE_NUMBER, InscriptionIdValue, u32 }
 define_table! { INSCRIPTION_NUMBER_TO_SEQUENCE_NUMBER, i32, u32 }
 define_table! { OUTPOINT_TO_RUNE_BALANCES, &OutPointValue, &[u8] }
-define_table! { OUTPOINT_TO_SAT_RANGES, &OutPointValue, &[u8] }
-define_table! { OUTPOINT_TO_VALUE, &OutPointValue, u64}
+define_table! { OUTPOINT_TO_UTXO_ENTRY, &OutPointValue, &UtxoEntry }
 define_table! { RUNE_ID_TO_RUNE_ENTRY, RuneIdValue, RuneEntryValue }
 define_table! { RUNE_TO_RUNE_ID, u128, RuneIdValue }
 define_table! { SAT_TO_SATPOINT, u64, &SatPointValue }
@@ -79,17 +79,18 @@ pub(crate) enum Statistic {
   BlessedInscriptions = 1,
   Commits = 2,
   CursedInscriptions = 3,
-  IndexRunes = 4,
-  IndexSats = 5,
-  LostSats = 6,
-  OutputsTraversed = 7,
-  ReservedRunes = 8,
-  Runes = 9,
-  SatRanges = 10,
-  UnboundInscriptions = 11,
-  IndexTransactions = 12,
-  IndexSpentSats = 13,
-  InitialSyncTime = 14,
+  IndexAddresses = 4,
+  IndexInscriptions = 5,
+  IndexRunes = 6,
+  IndexSats = 7,
+  IndexTransactions = 8,
+  InitialSyncTime = 9,
+  LostSats = 10,
+  OutputsTraversed = 11,
+  ReservedRunes = 12,
+  Runes = 13,
+  SatRanges = 14,
+  UnboundInscriptions = 16,
 }
 
 impl Statistic {
@@ -105,7 +106,7 @@ impl From<Statistic> for u64 {
 }
 
 #[derive(Serialize)]
-pub(crate) struct Info {
+pub struct Info {
   blocks_indexed: u32,
   branch_pages: u64,
   fragmented_bytes: u64,
@@ -119,7 +120,7 @@ pub(crate) struct Info {
   stored_bytes: u64,
   tables: BTreeMap<String, TableInfo>,
   total_bytes: u64,
-  pub(crate) transactions: Vec<TransactionInfo>,
+  pub transactions: Vec<TransactionInfo>,
   tree_height: u32,
   utxos_indexed: u64,
 }
@@ -152,9 +153,9 @@ impl From<TableStats> for TableInfo {
 }
 
 #[derive(Serialize)]
-pub(crate) struct TransactionInfo {
-  pub(crate) starting_block_count: u32,
-  pub(crate) starting_timestamp: u128,
+pub struct TransactionInfo {
+  pub starting_block_count: u32,
+  pub starting_timestamp: u128,
 }
 
 pub(crate) trait BitcoinCoreRpcResultExt<T> {
@@ -185,17 +186,18 @@ pub struct Index {
   database: Database,
   durability: redb::Durability,
   event_sender: Option<tokio::sync::mpsc::Sender<Event>>,
-  first_inscription_height: u32,
   genesis_block_coinbase_transaction: Transaction,
   genesis_block_coinbase_txid: Txid,
   height_limit: Option<u32>,
+  index_addresses: bool,
+  index_inscriptions: bool,
   index_runes: bool,
   index_sats: bool,
-  index_spent_sats: bool,
   index_transactions: bool,
-  settings: Settings,
   path: PathBuf,
+  settings: Settings,
   started: DateTime<Utc>,
+  first_index_height: u32,
   unrecoverably_reorged: AtomicBool,
 }
 
@@ -212,12 +214,9 @@ impl Index {
 
     let path = settings.index().to_owned();
 
-    if let Err(err) = fs::create_dir_all(path.parent().unwrap()) {
-      bail!(
-        "failed to create data dir `{}`: {err}",
-        path.parent().unwrap().display()
-      );
-    }
+    let data_dir = path.parent().unwrap();
+
+    fs::create_dir_all(data_dir).snafu_context(error::Io { path: data_dir })?;
 
     let index_cache_size = settings.index_cache_size();
 
@@ -296,17 +295,16 @@ impl Index {
 
         tx.set_durability(durability);
 
-        tx.open_multimap_table(SATPOINT_TO_SEQUENCE_NUMBER)?;
         tx.open_multimap_table(SAT_TO_SEQUENCE_NUMBER)?;
+        tx.open_multimap_table(SCRIPT_PUBKEY_TO_OUTPOINT)?;
         tx.open_multimap_table(SEQUENCE_NUMBER_TO_CHILDREN)?;
-        tx.open_table(CONTENT_TYPE_TO_COUNT)?;
         tx.open_table(HEIGHT_TO_BLOCK_HEADER)?;
         tx.open_table(HEIGHT_TO_LAST_SEQUENCE_NUMBER)?;
         tx.open_table(HOME_INSCRIPTIONS)?;
         tx.open_table(INSCRIPTION_ID_TO_SEQUENCE_NUMBER)?;
         tx.open_table(INSCRIPTION_NUMBER_TO_SEQUENCE_NUMBER)?;
         tx.open_table(OUTPOINT_TO_RUNE_BALANCES)?;
-        tx.open_table(OUTPOINT_TO_VALUE)?;
+        tx.open_table(OUTPOINT_TO_UTXO_ENTRY)?;
         tx.open_table(RUNE_ID_TO_RUNE_ENTRY)?;
         tx.open_table(RUNE_TO_RUNE_ID)?;
         tx.open_table(SAT_TO_SATPOINT)?;
@@ -317,41 +315,42 @@ impl Index {
         tx.open_table(WRITE_TRANSACTION_STARTING_BLOCK_COUNT_TO_TIMESTAMP)?;
 
         {
-          let mut outpoint_to_sat_ranges = tx.open_table(OUTPOINT_TO_SAT_RANGES)?;
           let mut statistics = tx.open_table(STATISTIC_TO_COUNT)?;
 
-          if settings.index_sats() {
-            outpoint_to_sat_ranges.insert(&OutPoint::null().store(), [].as_slice())?;
-          }
+          Self::set_statistic(
+            &mut statistics,
+            Statistic::IndexAddresses,
+            u64::from(settings.index_addresses_raw()),
+          )?;
+
+          Self::set_statistic(
+            &mut statistics,
+            Statistic::IndexInscriptions,
+            u64::from(settings.index_inscriptions_raw()),
+          )?;
 
           Self::set_statistic(
             &mut statistics,
             Statistic::IndexRunes,
-            u64::from(settings.index_runes()),
+            u64::from(settings.index_runes_raw()),
           )?;
 
           Self::set_statistic(
             &mut statistics,
             Statistic::IndexSats,
-            u64::from(settings.index_sats() || settings.index_spent_sats()),
-          )?;
-
-          Self::set_statistic(
-            &mut statistics,
-            Statistic::IndexSpentSats,
-            u64::from(settings.index_spent_sats()),
+            u64::from(settings.index_sats_raw()),
           )?;
 
           Self::set_statistic(
             &mut statistics,
             Statistic::IndexTransactions,
-            u64::from(settings.index_transactions()),
+            u64::from(settings.index_transactions_raw()),
           )?;
 
           Self::set_statistic(&mut statistics, Statistic::Schema, SCHEMA_VERSION)?;
         }
 
-        if settings.index_runes() && settings.chain() == Chain::Mainnet {
+        if settings.index_runes_raw() && settings.chain() == Chain::Mainnet {
           let rune = Rune(2055900680524219742);
 
           let id = RuneId { block: 1, tx: 0 };
@@ -402,22 +401,34 @@ impl Index {
       Err(error) => bail!("failed to open index: {error}"),
     };
 
+    let index_addresses;
     let index_runes;
     let index_sats;
-    let index_spent_sats;
     let index_transactions;
+    let index_inscriptions;
 
     {
       let tx = database.begin_read()?;
       let statistics = tx.open_table(STATISTIC_TO_COUNT)?;
+      index_addresses = Self::is_statistic_set(&statistics, Statistic::IndexAddresses)?;
+      index_inscriptions = Self::is_statistic_set(&statistics, Statistic::IndexInscriptions)?;
       index_runes = Self::is_statistic_set(&statistics, Statistic::IndexRunes)?;
       index_sats = Self::is_statistic_set(&statistics, Statistic::IndexSats)?;
-      index_spent_sats = Self::is_statistic_set(&statistics, Statistic::IndexSpentSats)?;
       index_transactions = Self::is_statistic_set(&statistics, Statistic::IndexTransactions)?;
     }
 
     let genesis_block_coinbase_transaction =
       settings.chain().genesis_block().coinbase().unwrap().clone();
+
+    let first_index_height = if index_sats || index_addresses {
+      0
+    } else if index_inscriptions {
+      settings.first_inscription_height()
+    } else if index_runes {
+      settings.first_rune_height()
+    } else {
+      u32::MAX
+    };
 
     Ok(Self {
       genesis_block_coinbase_txid: genesis_block_coinbase_transaction.txid(),
@@ -425,13 +436,14 @@ impl Index {
       database,
       durability,
       event_sender,
-      first_inscription_height: settings.first_inscription_height(),
+      first_index_height,
       genesis_block_coinbase_transaction,
       height_limit: settings.height_limit(),
+      index_addresses,
       index_runes,
       index_sats,
-      index_spent_sats,
       index_transactions,
+      index_inscriptions,
       settings: settings.clone(),
       path,
       started: Utc::now(),
@@ -439,31 +451,52 @@ impl Index {
     })
   }
 
+  pub fn have_full_utxo_index(&self) -> bool {
+    self.first_index_height == 0
+  }
+
+  /// Unlike normal outpoints, which are added to index on creation and removed
+  /// when spent, the UTXO entry for special outpoints may be updated.
+  ///
+  /// The special outpoints are the null outpoint, which receives lost sats,
+  /// and the unbound outpoint, which receives unbound inscriptions.
+  pub fn is_special_outpoint(outpoint: OutPoint) -> bool {
+    outpoint == OutPoint::null() || outpoint == unbound_outpoint()
+  }
+
   #[cfg(test)]
   fn set_durability(&mut self, durability: redb::Durability) {
     self.durability = durability;
   }
 
-  pub(crate) fn contains_output(&self, output: &OutPoint) -> Result<bool> {
+  pub fn contains_output(&self, output: &OutPoint) -> Result<bool> {
     Ok(
       self
         .database
         .begin_read()?
-        .open_table(OUTPOINT_TO_VALUE)?
+        .open_table(OUTPOINT_TO_UTXO_ENTRY)?
         .get(&output.store())?
         .is_some(),
     )
   }
 
-  pub(crate) fn has_rune_index(&self) -> bool {
+  pub fn has_address_index(&self) -> bool {
+    self.index_addresses
+  }
+
+  pub fn has_inscription_index(&self) -> bool {
+    self.index_inscriptions
+  }
+
+  pub fn has_rune_index(&self) -> bool {
     self.index_runes
   }
 
-  pub(crate) fn has_sat_index(&self) -> bool {
+  pub fn has_sat_index(&self) -> bool {
     self.index_sats
   }
 
-  pub(crate) fn status(&self) -> Result<StatusHtml> {
+  pub fn status(&self) -> Result<StatusHtml> {
     let rtx = self.database.begin_read()?;
 
     let statistic_to_count = rtx.open_table(STATISTIC_TO_COUNT)?;
@@ -490,32 +523,23 @@ impl Index {
     let cursed_inscriptions = statistic(Statistic::CursedInscriptions)?;
     let initial_sync_time = statistic(Statistic::InitialSyncTime)?;
 
-    let mut content_type_counts = rtx
-      .open_table(CONTENT_TYPE_TO_COUNT)?
-      .iter()?
-      .map(|result| {
-        result.map(|(key, value)| (key.value().map(|slice| slice.into()), value.value()))
-      })
-      .collect::<Result<Vec<(Option<Vec<u8>>, u64)>, StorageError>>()?;
-
-    content_type_counts.sort_by_key(|(_content_type, count)| Reverse(*count));
-
     Ok(StatusHtml {
+      address_index: self.has_address_index(),
       blessed_inscriptions,
       chain: self.settings.chain(),
-      content_type_counts,
       cursed_inscriptions,
       height,
       initial_sync_time: Duration::from_micros(initial_sync_time),
+      inscription_index: self.has_inscription_index(),
       inscriptions: blessed_inscriptions + cursed_inscriptions,
       lost_sats: statistic(Statistic::LostSats)?,
       minimum_rune_for_next_block: Rune::minimum_at_height(
         self.settings.chain().network(),
         Height(next_height),
       ),
-      rune_index: statistic(Statistic::IndexRunes)? != 0,
+      rune_index: self.has_rune_index(),
       runes: statistic(Statistic::Runes)?,
-      sat_index: statistic(Statistic::IndexSats)? != 0,
+      sat_index: self.has_sat_index(),
       started: self.started,
       transaction_index: statistic(Statistic::IndexTransactions)? != 0,
       unrecoverably_reorged: self.unrecoverably_reorged.load(atomic::Ordering::Relaxed),
@@ -523,7 +547,7 @@ impl Index {
     })
   }
 
-  pub(crate) fn info(&self) -> Result<Info> {
+  pub fn info(&self) -> Result<Info> {
     let stats = self.database.begin_write()?.stats()?;
 
     let rtx = self.database.begin_read()?;
@@ -602,7 +626,7 @@ impl Index {
           })
           .collect(),
         tree_height: stats.tree_height(),
-        utxos_indexed: rtx.open_table(OUTPOINT_TO_SAT_RANGES)?.len()?,
+        utxos_indexed: rtx.open_table(OUTPOINT_TO_UTXO_ENTRY)?.len()?,
       }
     };
 
@@ -623,9 +647,7 @@ impl Index {
           .unwrap_or(0),
         index: self,
         outputs_cached: 0,
-        outputs_inserted_since_flush: 0,
         outputs_traversed: 0,
-        range_cache: HashMap::new(),
         sat_ranges_since_flush: 0,
       };
 
@@ -651,7 +673,7 @@ impl Index {
     }
   }
 
-  pub(crate) fn export(&self, filename: &String, include_addresses: bool) -> Result {
+  pub fn export(&self, filename: &String, include_addresses: bool) -> Result {
     let mut writer = BufWriter::new(fs::File::create(filename)?);
     let rtx = self.database.begin_read()?;
 
@@ -668,6 +690,7 @@ impl Index {
     log::info!("exporting database tables to {filename}");
 
     let sequence_number_to_satpoint = rtx.open_table(SEQUENCE_NUMBER_TO_SATPOINT)?;
+    let outpoint_to_utxo_entry = rtx.open_table(OUTPOINT_TO_UTXO_ENTRY)?;
 
     for result in rtx
       .open_table(SEQUENCE_NUMBER_TO_INSCRIPTION_ENTRY)?
@@ -693,17 +716,31 @@ impl Index {
         let address = if satpoint.outpoint == unbound_outpoint() {
           "unbound".to_string()
         } else {
-          let output = self
-            .get_transaction(satpoint.outpoint.txid)?
-            .unwrap()
-            .output
-            .into_iter()
-            .nth(satpoint.outpoint.vout.try_into().unwrap())
-            .unwrap();
+          let script_pubkey = if self.index_addresses {
+            ScriptBuf::from_bytes(
+              outpoint_to_utxo_entry
+                .get(&satpoint.outpoint.store())?
+                .unwrap()
+                .value()
+                .parse(self)
+                .script_pubkey()
+                .to_vec(),
+            )
+          } else {
+            self
+              .get_transaction(satpoint.outpoint.txid)?
+              .unwrap()
+              .output
+              .into_iter()
+              .nth(satpoint.outpoint.vout.try_into().unwrap())
+              .unwrap()
+              .script_pubkey
+          };
+
           self
             .settings
             .chain()
-            .address_from_script(&output.script_pubkey)
+            .address_from_script(&script_pubkey)
             .map(|address| address.to_string())
             .unwrap_or_else(|e| e.to_string())
         };
@@ -785,19 +822,19 @@ impl Index {
       .inscription_number
   }
 
-  pub(crate) fn block_count(&self) -> Result<u32> {
+  pub fn block_count(&self) -> Result<u32> {
     self.begin_read()?.block_count()
   }
 
-  pub(crate) fn block_height(&self) -> Result<Option<Height>> {
+  pub fn block_height(&self) -> Result<Option<Height>> {
     self.begin_read()?.block_height()
   }
 
-  pub(crate) fn block_hash(&self, height: Option<u32>) -> Result<Option<BlockHash>> {
+  pub fn block_hash(&self, height: Option<u32>) -> Result<Option<BlockHash>> {
     self.begin_read()?.block_hash(height)
   }
 
-  pub(crate) fn blocks(&self, take: usize) -> Result<Vec<(u32, BlockHash)>> {
+  pub fn blocks(&self, take: usize) -> Result<Vec<(u32, BlockHash)>> {
     let rtx = self.begin_read()?;
 
     let block_count = rtx.block_count()?;
@@ -818,7 +855,7 @@ impl Index {
     Ok(blocks)
   }
 
-  pub(crate) fn rare_sat_satpoints(&self) -> Result<Vec<(Sat, SatPoint)>> {
+  pub fn rare_sat_satpoints(&self) -> Result<Vec<(Sat, SatPoint)>> {
     let rtx = self.database.begin_read()?;
 
     let sat_to_satpoint = rtx.open_table(SAT_TO_SATPOINT)?;
@@ -833,7 +870,7 @@ impl Index {
     Ok(result)
   }
 
-  pub(crate) fn rare_sat_satpoint(&self, sat: Sat) -> Result<Option<SatPoint>> {
+  pub fn rare_sat_satpoint(&self, sat: Sat) -> Result<Option<SatPoint>> {
     Ok(
       self
         .database
@@ -844,7 +881,7 @@ impl Index {
     )
   }
 
-  pub(crate) fn get_rune_by_id(&self, id: RuneId) -> Result<Option<Rune>> {
+  pub fn get_rune_by_id(&self, id: RuneId) -> Result<Option<Rune>> {
     Ok(
       self
         .database
@@ -855,7 +892,7 @@ impl Index {
     )
   }
 
-  pub(crate) fn get_rune_by_number(&self, number: usize) -> Result<Option<Rune>> {
+  pub fn get_rune_by_number(&self, number: usize) -> Result<Option<Rune>> {
     match self
       .database
       .begin_read()?
@@ -872,10 +909,7 @@ impl Index {
     }
   }
 
-  pub(crate) fn rune(
-    &self,
-    rune: Rune,
-  ) -> Result<Option<(RuneId, RuneEntry, Option<InscriptionId>)>> {
+  pub fn rune(&self, rune: Rune) -> Result<Option<(RuneId, RuneEntry, Option<InscriptionId>)>> {
     let rtx = self.database.begin_read()?;
 
     let Some(id) = rtx
@@ -908,7 +942,7 @@ impl Index {
     Ok(Some((RuneId::load(id), entry, parent)))
   }
 
-  pub(crate) fn runes(&self) -> Result<Vec<(RuneId, RuneEntry)>> {
+  pub fn runes(&self) -> Result<Vec<(RuneId, RuneEntry)>> {
     let mut entries = Vec::new();
 
     for result in self
@@ -924,7 +958,7 @@ impl Index {
     Ok(entries)
   }
 
-  pub(crate) fn runes_paginated(
+  pub fn runes_paginated(
     &self,
     page_size: usize,
     page_index: usize,
@@ -949,31 +983,31 @@ impl Index {
     Ok((entries, more))
   }
 
-  pub(crate) fn encode_rune_balance(id: RuneId, balance: u128, buffer: &mut Vec<u8>) {
+  pub fn encode_rune_balance(id: RuneId, balance: u128, buffer: &mut Vec<u8>) {
     varint::encode_to_vec(id.block.into(), buffer);
     varint::encode_to_vec(id.tx.into(), buffer);
     varint::encode_to_vec(balance, buffer);
   }
 
-  pub(crate) fn decode_rune_balance(buffer: &[u8]) -> Option<((RuneId, u128), usize)> {
+  pub fn decode_rune_balance(buffer: &[u8]) -> Result<((RuneId, u128), usize)> {
     let mut len = 0;
     let (block, block_len) = varint::decode(&buffer[len..])?;
     len += block_len;
     let (tx, tx_len) = varint::decode(&buffer[len..])?;
     len += tx_len;
     let id = RuneId {
-      block: block.try_into().ok()?,
-      tx: tx.try_into().ok()?,
+      block: block.try_into()?,
+      tx: tx.try_into()?,
     };
     let (balance, balance_len) = varint::decode(&buffer[len..])?;
     len += balance_len;
-    Some(((id, balance), len))
+    Ok(((id, balance), len))
   }
 
-  pub(crate) fn get_rune_balances_for_outpoint(
+  pub fn get_rune_balances_for_output(
     &self,
     outpoint: OutPoint,
-  ) -> Result<Vec<(SpacedRune, Pile)>> {
+  ) -> Result<BTreeMap<SpacedRune, Pile>> {
     let rtx = self.database.begin_read()?;
 
     let outpoint_to_balances = rtx.open_table(OUTPOINT_TO_RUNE_BALANCES)?;
@@ -981,12 +1015,12 @@ impl Index {
     let id_to_rune_entries = rtx.open_table(RUNE_ID_TO_RUNE_ENTRY)?;
 
     let Some(balances) = outpoint_to_balances.get(&outpoint.store())? else {
-      return Ok(Vec::new());
+      return Ok(BTreeMap::new());
     };
 
     let balances_buffer = balances.value();
 
-    let mut balances = Vec::new();
+    let mut balances = BTreeMap::new();
     let mut i = 0;
     while i < balances_buffer.len() {
       let ((id, amount), length) = Index::decode_rune_balance(&balances_buffer[i..]).unwrap();
@@ -994,22 +1028,20 @@ impl Index {
 
       let entry = RuneEntry::load(id_to_rune_entries.get(id.store())?.unwrap().value());
 
-      balances.push((
+      balances.insert(
         entry.spaced_rune,
         Pile {
           amount,
           divisibility: entry.divisibility,
           symbol: entry.symbol,
         },
-      ));
+      );
     }
 
     Ok(balances)
   }
 
-  pub(crate) fn get_rune_balance_map(
-    &self,
-  ) -> Result<BTreeMap<SpacedRune, BTreeMap<OutPoint, Pile>>> {
+  pub fn get_rune_balance_map(&self) -> Result<BTreeMap<SpacedRune, BTreeMap<OutPoint, Pile>>> {
     let outpoint_balances = self.get_rune_balances()?;
 
     let rtx = self.database.begin_read()?;
@@ -1064,7 +1096,7 @@ impl Index {
     Ok(rune_balances)
   }
 
-  pub(crate) fn get_rune_balances(&self) -> Result<Vec<(OutPoint, Vec<(RuneId, u128)>)>> {
+  pub fn get_rune_balances(&self) -> Result<Vec<(OutPoint, Vec<(RuneId, u128)>)>> {
     let mut result = Vec::new();
 
     for entry in self
@@ -1091,19 +1123,19 @@ impl Index {
     Ok(result)
   }
 
-  pub(crate) fn block_header(&self, hash: BlockHash) -> Result<Option<Header>> {
+  pub fn block_header(&self, hash: BlockHash) -> Result<Option<Header>> {
     self.client.get_block_header(&hash).into_option()
   }
 
-  pub(crate) fn block_header_info(&self, hash: BlockHash) -> Result<Option<GetBlockHeaderResult>> {
+  pub fn block_header_info(&self, hash: BlockHash) -> Result<Option<GetBlockHeaderResult>> {
     self.client.get_block_header_info(&hash).into_option()
   }
 
-  pub(crate) fn block_stats(&self, height: u64) -> Result<Option<GetBlockStatsResult>> {
+  pub fn block_stats(&self, height: u64) -> Result<Option<GetBlockStatsResult>> {
     self.client.get_block_stats(height).into_option()
   }
 
-  pub(crate) fn get_block_by_height(&self, height: u32) -> Result<Option<Block>> {
+  pub fn get_block_by_height(&self, height: u32) -> Result<Option<Block>> {
     Ok(
       self
         .client
@@ -1114,11 +1146,11 @@ impl Index {
     )
   }
 
-  pub(crate) fn get_block_by_hash(&self, hash: BlockHash) -> Result<Option<Block>> {
+  pub fn get_block_by_hash(&self, hash: BlockHash) -> Result<Option<Block>> {
     self.client.get_block(&hash).into_option()
   }
 
-  pub(crate) fn get_collections_paginated(
+  pub fn get_collections_paginated(
     &self,
     page_size: usize,
     page_index: usize,
@@ -1216,7 +1248,7 @@ impl Index {
       .collect()
   }
 
-  pub(crate) fn get_children_by_sequence_number_paginated(
+  pub fn get_children_by_sequence_number_paginated(
     &self,
     sequence_number: u32,
     page_size: usize,
@@ -1251,7 +1283,7 @@ impl Index {
     Ok((children, more))
   }
 
-  pub(crate) fn get_parents_by_sequence_number_paginated(
+  pub fn get_parents_by_sequence_number_paginated(
     &self,
     parent_sequence_numbers: Vec<u32>,
     page_index: usize,
@@ -1282,7 +1314,7 @@ impl Index {
     Ok((parents, more_parents))
   }
 
-  pub(crate) fn get_etching(&self, txid: Txid) -> Result<Option<SpacedRune>> {
+  pub fn get_etching(&self, txid: Txid) -> Result<Option<SpacedRune>> {
     let rtx = self.database.begin_read()?;
 
     let transaction_id_to_rune = rtx.open_table(TRANSACTION_ID_TO_RUNE)?;
@@ -1299,7 +1331,7 @@ impl Index {
     Ok(Some(RuneEntry::load(entry.value()).spaced_rune))
   }
 
-  pub(crate) fn get_inscription_ids_by_sat(&self, sat: Sat) -> Result<Vec<InscriptionId>> {
+  pub fn get_inscription_ids_by_sat(&self, sat: Sat) -> Result<Vec<InscriptionId>> {
     let rtx = self.database.begin_read()?;
 
     let sequence_number_to_inscription_entry =
@@ -1323,7 +1355,7 @@ impl Index {
     Ok(ids)
   }
 
-  pub(crate) fn get_inscription_ids_by_sat_paginated(
+  pub fn get_inscription_ids_by_sat_paginated(
     &self,
     sat: Sat,
     page_size: u64,
@@ -1360,7 +1392,7 @@ impl Index {
     Ok((ids, more))
   }
 
-  pub(crate) fn get_inscription_id_by_sat_indexed(
+  pub fn get_inscription_id_by_sat_indexed(
     &self,
     sat: Sat,
     inscription_index: isize,
@@ -1417,7 +1449,7 @@ impl Index {
     Ok(inscription_id)
   }
 
-  pub(crate) fn get_inscription_satpoint_by_id(
+  pub fn get_inscription_satpoint_by_id(
     &self,
     inscription_id: InscriptionId,
   ) -> Result<Option<SatPoint>> {
@@ -1439,7 +1471,7 @@ impl Index {
     Ok(satpoint)
   }
 
-  pub(crate) fn get_inscription_by_id(
+  pub fn get_inscription_by_id(
     &self,
     inscription_id: InscriptionId,
   ) -> Result<Option<Inscription>> {
@@ -1455,7 +1487,7 @@ impl Index {
     }))
   }
 
-  pub(crate) fn inscription_count(&self, txid: Txid) -> Result<u32> {
+  pub fn inscription_count(&self, txid: Txid) -> Result<u32> {
     let start = InscriptionId { index: 0, txid };
 
     let end = InscriptionId {
@@ -1475,7 +1507,7 @@ impl Index {
     )
   }
 
-  pub(crate) fn inscription_exists(&self, inscription_id: InscriptionId) -> Result<bool> {
+  pub fn inscription_exists(&self, inscription_id: InscriptionId) -> Result<bool> {
     Ok(
       self
         .database
@@ -1486,26 +1518,23 @@ impl Index {
     )
   }
 
-  pub(crate) fn get_inscriptions_on_output_with_satpoints(
+  pub fn get_inscriptions_on_output_with_satpoints(
     &self,
     outpoint: OutPoint,
   ) -> Result<Vec<(SatPoint, InscriptionId)>> {
     let rtx = self.database.begin_read()?;
-    let satpoint_to_sequence_number = rtx.open_multimap_table(SATPOINT_TO_SEQUENCE_NUMBER)?;
+    let outpoint_to_utxo_entry = rtx.open_table(OUTPOINT_TO_UTXO_ENTRY)?;
     let sequence_number_to_inscription_entry =
       rtx.open_table(SEQUENCE_NUMBER_TO_INSCRIPTION_ENTRY)?;
 
-    Self::inscriptions_on_output(
-      &satpoint_to_sequence_number,
+    self.inscriptions_on_output(
+      &outpoint_to_utxo_entry,
       &sequence_number_to_inscription_entry,
       outpoint,
     )
   }
 
-  pub(crate) fn get_inscriptions_on_output(
-    &self,
-    outpoint: OutPoint,
-  ) -> Result<Vec<InscriptionId>> {
+  pub fn get_inscriptions_for_output(&self, outpoint: OutPoint) -> Result<Vec<InscriptionId>> {
     Ok(
       self
         .get_inscriptions_on_output_with_satpoints(outpoint)?
@@ -1515,7 +1544,24 @@ impl Index {
     )
   }
 
-  pub(crate) fn get_transaction(&self, txid: Txid) -> Result<Option<Transaction>> {
+  pub fn get_inscriptions_for_outputs(
+    &self,
+    outpoints: &Vec<OutPoint>,
+  ) -> Result<Vec<InscriptionId>> {
+    let mut inscriptions = Vec::new();
+    for outpoint in outpoints {
+      inscriptions.extend(
+        self
+          .get_inscriptions_on_output_with_satpoints(*outpoint)?
+          .iter()
+          .map(|(_satpoint, inscription_id)| *inscription_id),
+      );
+    }
+
+    Ok(inscriptions)
+  }
+
+  pub fn get_transaction(&self, txid: Txid) -> Result<Option<Transaction>> {
     if txid == self.genesis_block_coinbase_txid {
       return Ok(Some(self.genesis_block_coinbase_transaction.clone()));
     }
@@ -1534,7 +1580,7 @@ impl Index {
     self.client.get_raw_transaction(&txid, None).into_option()
   }
 
-  pub(crate) fn find(&self, sat: Sat) -> Result<Option<SatPoint>> {
+  pub fn find(&self, sat: Sat) -> Result<Option<SatPoint>> {
     let sat = sat.0;
     let rtx = self.begin_read()?;
 
@@ -1542,16 +1588,18 @@ impl Index {
       return Ok(None);
     }
 
-    let outpoint_to_sat_ranges = rtx.0.open_table(OUTPOINT_TO_SAT_RANGES)?;
+    let outpoint_to_utxo_entry = rtx.0.open_table(OUTPOINT_TO_UTXO_ENTRY)?;
 
-    for range in outpoint_to_sat_ranges.range::<&[u8; 36]>(&[0; 36]..)? {
-      let (key, value) = range?;
+    for entry in outpoint_to_utxo_entry.iter()? {
+      let (outpoint, utxo_entry) = entry?;
+      let sat_ranges = utxo_entry.value().parse(self).sat_ranges();
+
       let mut offset = 0;
-      for chunk in value.value().chunks_exact(11) {
+      for chunk in sat_ranges.chunks_exact(11) {
         let (start, end) = SatRange::load(chunk.try_into().unwrap());
         if start <= sat && sat < end {
           return Ok(Some(SatPoint {
-            outpoint: Entry::load(*key.value()),
+            outpoint: Entry::load(*outpoint.value()),
             offset: offset + sat - start,
           }));
         }
@@ -1562,7 +1610,7 @@ impl Index {
     Ok(None)
   }
 
-  pub(crate) fn find_range(
+  pub fn find_range(
     &self,
     range_start: Sat,
     range_end: Sat,
@@ -1579,14 +1627,15 @@ impl Index {
       return Err(anyhow!("range end is before range start"));
     };
 
-    let outpoint_to_sat_ranges = rtx.0.open_table(OUTPOINT_TO_SAT_RANGES)?;
+    let outpoint_to_utxo_entry = rtx.0.open_table(OUTPOINT_TO_UTXO_ENTRY)?;
 
     let mut result = Vec::new();
-    for range in outpoint_to_sat_ranges.range::<&[u8; 36]>(&[0; 36]..)? {
-      let (outpoint_entry, sat_ranges_entry) = range?;
+    for entry in outpoint_to_utxo_entry.iter()? {
+      let (outpoint, utxo_entry) = entry?;
+      let sat_ranges = utxo_entry.value().parse(self).sat_ranges();
 
       let mut offset = 0;
-      for sat_range in sat_ranges_entry.value().chunks_exact(11) {
+      for sat_range in sat_ranges.chunks_exact(11) {
         let (start, end) = SatRange::load(sat_range.try_into().unwrap());
 
         if end > range_start && start < range_end {
@@ -1597,7 +1646,7 @@ impl Index {
             start: overlap_start,
             size: overlap_end - overlap_start,
             satpoint: SatPoint {
-              outpoint: Entry::load(*outpoint_entry.value()),
+              outpoint: Entry::load(*outpoint.value()),
               offset: offset + overlap_start - start,
             },
           });
@@ -1615,16 +1664,22 @@ impl Index {
     Ok(Some(result))
   }
 
-  pub(crate) fn list(&self, outpoint: OutPoint) -> Result<Option<Vec<(u64, u64)>>> {
+  pub fn list(&self, outpoint: OutPoint) -> Result<Option<Vec<(u64, u64)>>> {
+    if !self.index_sats {
+      return Ok(None);
+    }
+
     Ok(
       self
         .database
         .begin_read()?
-        .open_table(OUTPOINT_TO_SAT_RANGES)?
+        .open_table(OUTPOINT_TO_UTXO_ENTRY)?
         .get(&outpoint.store())?
-        .map(|outpoint| outpoint.value().to_vec())
-        .map(|sat_ranges| {
-          sat_ranges
+        .map(|utxo_entry| {
+          utxo_entry
+            .value()
+            .parse(self)
+            .sat_ranges()
             .chunks_exact(11)
             .map(|chunk| SatRange::load(chunk.try_into().unwrap()))
             .collect::<Vec<(u64, u64)>>()
@@ -1632,18 +1687,27 @@ impl Index {
     )
   }
 
-  pub(crate) fn is_output_spent(&self, outpoint: OutPoint) -> Result<bool> {
+  pub fn is_output_spent(&self, outpoint: OutPoint) -> Result<bool> {
     Ok(
       outpoint != OutPoint::null()
         && outpoint != self.settings.chain().genesis_coinbase_outpoint()
-        && self
-          .client
-          .get_tx_out(&outpoint.txid, outpoint.vout, Some(true))?
-          .is_none(),
+        && if self.have_full_utxo_index() {
+          self
+            .database
+            .begin_read()?
+            .open_table(OUTPOINT_TO_UTXO_ENTRY)?
+            .get(&outpoint.store())?
+            .is_none()
+        } else {
+          self
+            .client
+            .get_tx_out(&outpoint.txid, outpoint.vout, Some(true))?
+            .is_none()
+        },
     )
   }
 
-  pub(crate) fn is_output_in_active_chain(&self, outpoint: OutPoint) -> Result<bool> {
+  pub fn is_output_in_active_chain(&self, outpoint: OutPoint) -> Result<bool> {
     if outpoint == OutPoint::null() {
       return Ok(true);
     }
@@ -1660,7 +1724,7 @@ impl Index {
       return Ok(false);
     };
 
-    if !info.in_active_chain.unwrap_or_default() {
+    if info.blockhash.is_none() {
       return Ok(false);
     }
 
@@ -1671,7 +1735,7 @@ impl Index {
     Ok(true)
   }
 
-  pub(crate) fn block_time(&self, height: Height) -> Result<Blocktime> {
+  pub fn block_time(&self, height: Height) -> Result<Blocktime> {
     let height = height.n();
 
     let rtx = self.database.begin_read()?;
@@ -1705,7 +1769,7 @@ impl Index {
     ))
   }
 
-  pub(crate) fn get_inscriptions_paginated(
+  pub fn get_inscriptions_paginated(
     &self,
     page_size: u32,
     page_index: u32,
@@ -1741,7 +1805,7 @@ impl Index {
     Ok((inscriptions, more))
   }
 
-  pub(crate) fn get_inscriptions_in_block(&self, block_height: u32) -> Result<Vec<InscriptionId>> {
+  pub fn get_inscriptions_in_block(&self, block_height: u32) -> Result<Vec<InscriptionId>> {
     let rtx = self.database.begin_read()?;
 
     let height_to_last_sequence_number = rtx.open_table(HEIGHT_TO_LAST_SEQUENCE_NUMBER)?;
@@ -1771,7 +1835,30 @@ impl Index {
       .collect::<Result<Vec<InscriptionId>>>()
   }
 
-  pub(crate) fn get_highest_paying_inscriptions_in_block(
+  pub fn get_runes_in_block(&self, block_height: u64) -> Result<Vec<SpacedRune>> {
+    let rtx = self.database.begin_read()?;
+
+    let rune_id_to_rune_entry = rtx.open_table(RUNE_ID_TO_RUNE_ENTRY)?;
+
+    let min_id = RuneId {
+      block: block_height,
+      tx: 0,
+    };
+
+    let max_id = RuneId {
+      block: block_height,
+      tx: u32::MAX,
+    };
+
+    let runes = rune_id_to_rune_entry
+      .range(min_id.store()..=max_id.store())?
+      .map(|result| result.map(|(_, entry)| RuneEntry::load(entry.value()).spaced_rune))
+      .collect::<Result<Vec<SpacedRune>, StorageError>>()?;
+
+    Ok(runes)
+  }
+
+  pub fn get_highest_paying_inscriptions_in_block(
     &self,
     block_height: u32,
     n: usize,
@@ -1802,7 +1889,7 @@ impl Index {
     ))
   }
 
-  pub(crate) fn get_home_inscriptions(&self) -> Result<Vec<InscriptionId>> {
+  pub fn get_home_inscriptions(&self) -> Result<Vec<InscriptionId>> {
     Ok(
       self
         .database
@@ -1815,7 +1902,7 @@ impl Index {
     )
   }
 
-  pub(crate) fn get_feed_inscriptions(&self, n: usize) -> Result<Vec<(u32, InscriptionId)>> {
+  pub fn get_feed_inscriptions(&self, n: usize) -> Result<Vec<(u32, InscriptionId)>> {
     Ok(
       self
         .database
@@ -1834,6 +1921,7 @@ impl Index {
   pub(crate) fn inscription_info(
     &self,
     query: query::Inscription,
+    child: Option<usize>,
   ) -> Result<Option<(api::Inscription, Option<TxOut>, Inscription)>> {
     let rtx = self.database.begin_read()?;
 
@@ -1856,6 +1944,22 @@ impl Index {
 
     let Some(sequence_number) = sequence_number else {
       return Ok(None);
+    };
+
+    let sequence_number = if let Some(child) = child {
+      let Some(child) = rtx
+        .open_multimap_table(SEQUENCE_NUMBER_TO_CHILDREN)?
+        .get(sequence_number)?
+        .nth(child)
+        .transpose()?
+        .map(|child| child.value())
+      else {
+        return Ok(None);
+      };
+
+      child
+    } else {
+      sequence_number
     };
 
     let sequence_number_to_inscription_entry =
@@ -2015,7 +2119,7 @@ impl Index {
     )))
   }
 
-  pub(crate) fn get_inscription_entry(
+  pub fn get_inscription_entry(
     &self,
     inscription_id: InscriptionId,
   ) -> Result<Option<InscriptionEntry>> {
@@ -2046,9 +2150,7 @@ impl Index {
   ) {
     let rtx = self.database.begin_read().unwrap();
 
-    let satpoint_to_sequence_number = rtx
-      .open_multimap_table(SATPOINT_TO_SEQUENCE_NUMBER)
-      .unwrap();
+    let outpoint_to_utxo_entry = rtx.open_table(OUTPOINT_TO_UTXO_ENTRY).unwrap();
 
     let sequence_number_to_satpoint = rtx.open_table(SEQUENCE_NUMBER_TO_SATPOINT).unwrap();
 
@@ -2061,11 +2163,6 @@ impl Index {
       .value();
 
     assert_eq!(
-      satpoint_to_sequence_number.len().unwrap(),
-      sequence_number_to_satpoint.len().unwrap(),
-    );
-
-    assert_eq!(
       SatPoint::load(
         *sequence_number_to_satpoint
           .get(sequence_number)
@@ -2076,10 +2173,17 @@ impl Index {
       satpoint,
     );
 
-    assert!(satpoint_to_sequence_number
-      .get(&satpoint.store())
+    let utxo_entry = outpoint_to_utxo_entry
+      .get(&satpoint.outpoint.store())
       .unwrap()
-      .any(|result| result.unwrap().value() == sequence_number));
+      .unwrap();
+    let parsed_inscriptions = utxo_entry.value().parse(self).parse_inscriptions();
+    let satpoint_offsets: Vec<u64> = parsed_inscriptions
+      .iter()
+      .copied()
+      .filter_map(|(seq, offset)| (seq == sequence_number).then_some(offset))
+      .collect();
+    assert!(satpoint_offsets == [satpoint.offset]);
 
     match sat {
       Some(sat) => {
@@ -2120,47 +2224,97 @@ impl Index {
   }
 
   fn inscriptions_on_output<'a: 'tx, 'tx>(
-    satpoint_to_sequence_number: &'a impl ReadableMultimapTable<&'static SatPointValue, u32>,
+    &self,
+    outpoint_to_utxo_entry: &'a impl ReadableTable<&'static OutPointValue, &'static UtxoEntry>,
     sequence_number_to_inscription_entry: &'a impl ReadableTable<u32, InscriptionEntryValue>,
     outpoint: OutPoint,
   ) -> Result<Vec<(SatPoint, InscriptionId)>> {
-    let start = SatPoint {
-      outpoint,
-      offset: 0,
+    if !self.index_inscriptions {
+      return Ok(Vec::new());
     }
-    .store();
 
-    let end = SatPoint {
-      outpoint,
-      offset: u64::MAX,
-    }
-    .store();
+    let Some(utxo_entry) = outpoint_to_utxo_entry.get(&outpoint.store())? else {
+      return Ok(Vec::new());
+    };
 
-    let mut inscriptions = Vec::new();
+    let mut inscriptions = utxo_entry.value().parse(self).parse_inscriptions();
 
-    for range in satpoint_to_sequence_number.range::<&[u8; 44]>(&start..=&end)? {
-      let (satpoint, sequence_numbers) = range?;
-      for sequence_number_result in sequence_numbers {
-        let sequence_number = sequence_number_result?.value();
+    inscriptions.sort_by_key(|(sequence_number, _)| *sequence_number);
+
+    inscriptions
+      .into_iter()
+      .map(|(sequence_number, offset)| {
         let entry = sequence_number_to_inscription_entry
           .get(sequence_number)?
           .unwrap();
-        inscriptions.push((
-          sequence_number,
-          SatPoint::load(*satpoint.value()),
-          InscriptionEntry::load(entry.value()).id,
-        ));
+        let satpoint = SatPoint { outpoint, offset };
+        Ok((satpoint, InscriptionEntry::load(entry.value()).id))
+      })
+      .collect::<Result<_>>()
+  }
+
+  pub fn get_address_info(&self, address: &Address) -> Result<Vec<OutPoint>> {
+    self
+      .database
+      .begin_read()?
+      .open_multimap_table(SCRIPT_PUBKEY_TO_OUTPOINT)?
+      .get(address.script_pubkey().as_bytes())?
+      .map(|result| {
+        result
+          .map_err(|err| anyhow!(err))
+          .map(|value| OutPoint::load(value.value()))
+      })
+      .collect()
+  }
+
+  pub(crate) fn get_aggregated_rune_balances_for_outputs(
+    &self,
+    outputs: &Vec<OutPoint>,
+  ) -> Result<Vec<(SpacedRune, Decimal, Option<char>)>> {
+    let mut runes = BTreeMap::new();
+
+    for output in outputs {
+      let rune_balances = self.get_rune_balances_for_output(*output)?;
+
+      for (spaced_rune, pile) in rune_balances {
+        runes
+          .entry(spaced_rune)
+          .and_modify(|(decimal, _symbol): &mut (Decimal, Option<char>)| {
+            assert_eq!(decimal.scale, pile.divisibility);
+            decimal.value += pile.amount;
+          })
+          .or_insert((
+            Decimal {
+              value: pile.amount,
+              scale: pile.divisibility,
+            },
+            pile.symbol,
+          ));
       }
     }
 
-    inscriptions.sort_by_key(|(sequence_number, _, _)| *sequence_number);
-
     Ok(
-      inscriptions
+      runes
         .into_iter()
-        .map(|(_sequence_number, satpoint, inscription_id)| (satpoint, inscription_id))
+        .map(|(spaced_rune, (decimal, symbol))| (spaced_rune, decimal, symbol))
         .collect(),
     )
+  }
+
+  pub(crate) fn get_sat_balances_for_outputs(&self, outputs: &Vec<OutPoint>) -> Result<u64> {
+    let outpoint_to_utxo_entry = self
+      .database
+      .begin_read()?
+      .open_table(OUTPOINT_TO_UTXO_ENTRY)?;
+
+    let mut acc = 0;
+    for output in outputs {
+      if let Some(utxo_entry) = outpoint_to_utxo_entry.get(&output.store())? {
+        acc += utxo_entry.value().parse(self).total_value();
+      };
+    }
+
+    Ok(acc)
   }
 
   pub(crate) fn get_output_info(&self, outpoint: OutPoint) -> Result<Option<(api::Output, TxOut)>> {
@@ -2190,16 +2344,16 @@ impl Index {
         return Ok(None);
       };
 
-      let Some(output) = tx.output.into_iter().nth(outpoint.vout as usize) else {
+      let Some(txout) = tx.output.into_iter().nth(outpoint.vout as usize) else {
         return Ok(None);
       };
 
-      output
+      txout
     };
 
-    let inscriptions = self.get_inscriptions_on_output(outpoint)?;
+    let inscriptions = self.get_inscriptions_for_output(outpoint)?;
 
-    let runes = self.get_rune_balances_for_outpoint(outpoint)?;
+    let runes = self.get_rune_balances_for_output(outpoint)?;
 
     let spent = self.is_output_spent(outpoint)?;
 
@@ -2280,9 +2434,7 @@ mod tests {
     }
 
     {
-      let context = Context::builder()
-        .arg("--first-inscription-height=3")
-        .build();
+      let context = Context::builder().chain(Chain::Mainnet).build();
       context.mine_blocks(1);
       let txid = context.core.broadcast_tx(template);
       let inscription_id = InscriptionId { txid, index: 0 };
@@ -2870,53 +3022,6 @@ mod tests {
   }
 
   #[test]
-  fn missing_inputs_are_fetched_from_bitcoin_core() {
-    for args in [
-      ["--first-inscription-height", "2"].as_slice(),
-      ["--first-inscription-height", "2", "--index-sats"].as_slice(),
-    ] {
-      let context = Context::builder().args(args).build();
-      context.mine_blocks(1);
-
-      let txid = context.core.broadcast_tx(TransactionTemplate {
-        inputs: &[(1, 0, 0, inscription("text/plain", "hello").to_witness())],
-        ..default()
-      });
-      let inscription_id = InscriptionId { txid, index: 0 };
-
-      context.mine_blocks(1);
-
-      context.index.assert_inscription_location(
-        inscription_id,
-        SatPoint {
-          outpoint: OutPoint { txid, vout: 0 },
-          offset: 0,
-        },
-        Some(50 * COIN_VALUE),
-      );
-
-      let send_txid = context.core.broadcast_tx(TransactionTemplate {
-        inputs: &[(2, 0, 0, Default::default()), (2, 1, 0, Default::default())],
-        ..default()
-      });
-
-      context.mine_blocks(1);
-
-      context.index.assert_inscription_location(
-        inscription_id,
-        SatPoint {
-          outpoint: OutPoint {
-            txid: send_txid,
-            vout: 0,
-          },
-          offset: 50 * COIN_VALUE,
-        },
-        Some(50 * COIN_VALUE),
-      );
-    }
-  }
-
-  #[test]
   fn one_input_fee_spent_inscriptions_are_tracked_correctly() {
     for context in Context::configurations() {
       context.mine_blocks(1);
@@ -3091,9 +3196,7 @@ mod tests {
 
   #[test]
   fn lost_sats_are_tracked_correctly() {
-    let context = Context::builder()
-      .args(["--index-sats", "--first-inscription-height", "10"])
-      .build();
+    let context = Context::builder().args(["--index-sats"]).build();
     assert_eq!(context.index.statistic(Statistic::LostSats), 0);
 
     context.mine_blocks(1);
@@ -3120,11 +3223,15 @@ mod tests {
 
   #[test]
   fn lost_sat_ranges_are_tracked_correctly() {
-    let context = Context::builder()
-      .args(["--index-sats", "--first-inscription-height", "10"])
-      .build();
+    let context = Context::builder().args(["--index-sats"]).build();
 
-    let null_ranges = || context.index.list(OutPoint::null()).unwrap().unwrap();
+    let null_ranges = || {
+      context
+        .index
+        .list(OutPoint::null())
+        .unwrap()
+        .unwrap_or_default()
+    };
 
     assert!(null_ranges().is_empty());
 
@@ -3349,7 +3456,7 @@ mod tests {
       assert_eq!(
         context
           .index
-          .get_inscriptions_on_output(OutPoint { txid, vout: 0 })
+          .get_inscriptions_for_output(OutPoint { txid, vout: 0 })
           .unwrap(),
         []
       );
@@ -3359,7 +3466,7 @@ mod tests {
       assert_eq!(
         context
           .index
-          .get_inscriptions_on_output(OutPoint { txid, vout: 0 })
+          .get_inscriptions_for_output(OutPoint { txid, vout: 0 })
           .unwrap(),
         [inscription_id]
       );
@@ -3374,7 +3481,7 @@ mod tests {
       assert_eq!(
         context
           .index
-          .get_inscriptions_on_output(OutPoint { txid, vout: 0 })
+          .get_inscriptions_for_output(OutPoint { txid, vout: 0 })
           .unwrap(),
         []
       );
@@ -3382,7 +3489,7 @@ mod tests {
       assert_eq!(
         context
           .index
-          .get_inscriptions_on_output(OutPoint {
+          .get_inscriptions_for_output(OutPoint {
             txid: send_id,
             vout: 0,
           })
@@ -3412,7 +3519,7 @@ mod tests {
       assert_eq!(
         context
           .index
-          .get_inscriptions_on_output(OutPoint {
+          .get_inscriptions_for_output(OutPoint {
             txid: first,
             vout: 0
           })
@@ -4374,7 +4481,7 @@ mod tests {
             i,
             if i == 1 { 0 } else { 1 },
             0,
-            inscription("text/plain;charset=utf-8", &format!("hello {}", i)).to_witness(),
+            inscription("text/plain;charset=utf-8", format!("hello {i}")).to_witness(),
           )], // for the first inscription use coinbase, otherwise use the previous tx
           ..default()
         });
@@ -6063,112 +6170,6 @@ mod tests {
   }
 
   #[test]
-  fn index_spent_sats_retains_spent_sat_range_entries() {
-    let ranges = {
-      let context = Context::builder().arg("--index-sats").build();
-
-      context.mine_blocks(1);
-
-      let outpoint = OutPoint {
-        txid: context.core.tx(1, 0).into(),
-        vout: 0,
-      };
-
-      let ranges = context.index.list(outpoint).unwrap().unwrap();
-
-      assert!(!ranges.is_empty());
-
-      context.core.broadcast_tx(TransactionTemplate {
-        inputs: &[(1, 0, 0, Default::default())],
-        ..default()
-      });
-
-      context.mine_blocks(1);
-
-      assert!(context.index.list(outpoint).unwrap().is_none());
-
-      ranges
-    };
-
-    {
-      let context = Context::builder()
-        .arg("--index-sats")
-        .arg("--index-spent-sats")
-        .build();
-
-      context.mine_blocks(1);
-
-      let outpoint = OutPoint {
-        txid: context.core.tx(1, 0).into(),
-        vout: 0,
-      };
-
-      let unspent_ranges = context.index.list(outpoint).unwrap().unwrap();
-
-      assert!(!unspent_ranges.is_empty());
-
-      assert_eq!(unspent_ranges, ranges);
-
-      context.core.broadcast_tx(TransactionTemplate {
-        inputs: &[(1, 0, 0, Default::default())],
-        ..default()
-      });
-
-      context.mine_blocks(1);
-
-      let spent_ranges = context.index.list(outpoint).unwrap().unwrap();
-
-      assert_eq!(spent_ranges, ranges);
-    }
-  }
-
-  #[test]
-  fn index_spent_sats_implies_index_sats() {
-    let context = Context::builder().arg("--index-spent-sats").build();
-
-    context.mine_blocks(1);
-
-    let outpoint = OutPoint {
-      txid: context.core.tx(1, 0).into(),
-      vout: 0,
-    };
-
-    context.core.broadcast_tx(TransactionTemplate {
-      inputs: &[(1, 0, 0, Default::default())],
-      ..default()
-    });
-
-    context.mine_blocks(1);
-
-    assert!(context.index.list(outpoint).unwrap().is_some());
-  }
-
-  #[test]
-  fn spent_sats_are_retained_after_flush() {
-    let context = Context::builder().arg("--index-spent-sats").build();
-
-    context.mine_blocks(1);
-
-    let txid = context.core.broadcast_tx(TransactionTemplate {
-      inputs: &[(1, 0, 0, Default::default())],
-      ..default()
-    });
-
-    context.mine_blocks_with_update(1, false);
-
-    let outpoint = OutPoint { txid, vout: 0 };
-
-    context.core.broadcast_tx(TransactionTemplate {
-      inputs: &[(2, 1, 0, Default::default())],
-      ..default()
-    });
-
-    context.mine_blocks(1);
-
-    assert!(context.index.list(outpoint).unwrap().is_some());
-  }
-
-  #[test]
   fn is_output_spent() {
     let context = Context::builder().build();
 
@@ -6243,6 +6244,79 @@ mod tests {
         vout: 0,
       })
       .unwrap());
+  }
+
+  #[test]
+  fn output_addresses_are_updated() {
+    let context = Context::builder()
+      .arg("--index-addresses")
+      .arg("--index-sats")
+      .build();
+
+    context.mine_blocks(2);
+
+    let txid = context.core.broadcast_tx(TransactionTemplate {
+      inputs: &[(1, 0, 0, Witness::new()), (2, 0, 0, Witness::new())],
+      outputs: 2,
+      ..Default::default()
+    });
+
+    context.mine_blocks(1);
+
+    let transaction = context.index.get_transaction(txid).unwrap().unwrap();
+
+    let first_address = context
+      .index
+      .settings
+      .chain()
+      .address_from_script(&transaction.output[0].script_pubkey)
+      .unwrap();
+
+    let first_address_second_output = OutPoint {
+      txid: transaction.txid(),
+      vout: 1,
+    };
+
+    assert_eq!(
+      context.index.get_address_info(&first_address).unwrap(),
+      [
+        OutPoint {
+          txid: transaction.txid(),
+          vout: 0
+        },
+        first_address_second_output
+      ]
+    );
+
+    let txid = context.core.broadcast_tx(TransactionTemplate {
+      inputs: &[(3, 1, 0, Witness::new())],
+      p2tr: true,
+      ..Default::default()
+    });
+
+    context.mine_blocks(1);
+
+    let transaction = context.index.get_transaction(txid).unwrap().unwrap();
+
+    let second_address = context
+      .index
+      .settings
+      .chain()
+      .address_from_script(&transaction.output[0].script_pubkey)
+      .unwrap();
+
+    assert_eq!(
+      context.index.get_address_info(&first_address).unwrap(),
+      [first_address_second_output]
+    );
+
+    assert_eq!(
+      context.index.get_address_info(&second_address).unwrap(),
+      [OutPoint {
+        txid: transaction.txid(),
+        vout: 0
+      }]
+    );
   }
 
   #[test]
@@ -6583,5 +6657,25 @@ mod tests {
         rune_id: id,
       }
     );
+  }
+
+  #[test]
+  fn assert_schema_statistic_key_is_zero() {
+    // other schema statistic keys may chenge when the schema changes, but for
+    // good error messages in older versions, the schema statistic key must be
+    // zero
+    assert_eq!(Statistic::Schema.key(), 0);
+  }
+
+  #[test]
+  fn reminder_to_update_utxo_entry_type_name() {
+    // This test will break when the schema version is updated, and is a
+    // reminder to fix the type name in `impl redb::Value for &UtxoEntry`.
+    //
+    // The type name should be changed from `ord::index::utxo_entry::UtxoValue`
+    // to `ord::UtxoEntry`. I think it's probably best if we just name types
+    // `ord::NAME`, instead of including the full path, since the full path
+    // will change if we reorganize the code.
+    assert_eq!(SCHEMA_VERSION, 28);
   }
 }

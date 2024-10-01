@@ -133,9 +133,11 @@ pub struct TransactionTemplate<'a> {
   pub inputs: &'a [(usize, usize, usize, Witness)],
   pub op_return: Option<ScriptBuf>,
   pub op_return_index: Option<usize>,
+  pub op_return_value: Option<u64>,
   pub output_values: &'a [u64],
   pub outputs: usize,
   pub p2tr: bool,
+  pub receiver: Option<Address>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -180,9 +182,11 @@ impl<'a> Default for TransactionTemplate<'a> {
       inputs: &[],
       op_return: None,
       op_return_index: None,
+      op_return_value: None,
       output_values: &[],
       outputs: 1,
       p2tr: false,
+      receiver: None,
     }
   }
 }

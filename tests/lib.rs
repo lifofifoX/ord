@@ -7,13 +7,12 @@ use {
     blockdata::constants::COIN_VALUE,
     Network, OutPoint, Sequence, Txid, Witness,
   },
-  bitcoincore_rpc::bitcoincore_rpc_json::ListDescriptorsResult,
   chrono::{DateTime, Utc},
   executable_path::executable_path,
   mockcore::TransactionTemplate,
   ord::{
-    api, chain::Chain, outgoing::Outgoing, subcommand::runes::RuneInfo, wallet::batch,
-    InscriptionId, RuneEntry,
+    api, chain::Chain, decimal::Decimal, outgoing::Outgoing, subcommand::runes::RuneInfo,
+    wallet::batch, wallet::ListDescriptorsResult, InscriptionId, RuneEntry, TARGET_POSTAGE,
   },
   ordinals::{
     Artifact, Charm, Edict, Pile, Rarity, Rune, RuneId, Runestone, Sat, SatPoint, SpacedRune,
@@ -99,23 +98,37 @@ fn sats(
     .run_and_deserialize_output::<Vec<ord::subcommand::wallet::sats::OutputRare>>()
 }
 
-fn inscribe(core: &mockcore::Handle, ord: &TestServer) -> (InscriptionId, Txid) {
+fn inscribe_with_custom_postage(
+  core: &mockcore::Handle,
+  ord: &TestServer,
+  postage: Option<u64>,
+) -> (InscriptionId, Txid) {
   core.mine_blocks(1);
 
-  let output = CommandBuilder::new(format!(
+  let mut command_str = format!(
     "--chain {} wallet inscribe --fee-rate 1 --file foo.txt",
     core.network()
-  ))
-  .write("foo.txt", "FOO")
-  .core(core)
-  .ord(ord)
-  .run_and_deserialize_output::<Batch>();
+  );
+
+  if let Some(postage_value) = postage {
+    command_str.push_str(&format!(" --postage {}sat", postage_value));
+  }
+
+  let output = CommandBuilder::new(command_str)
+    .write("foo.txt", "FOO")
+    .core(core)
+    .ord(ord)
+    .run_and_deserialize_output::<Batch>();
 
   core.mine_blocks(1);
 
   assert_eq!(output.inscriptions.len(), 1);
 
   (output.inscriptions[0].id, output.reveal)
+}
+
+fn inscribe(core: &mockcore::Handle, ord: &TestServer) -> (InscriptionId, Txid) {
+  inscribe_with_custom_postage(core, ord, Some(TARGET_POSTAGE.to_sat()))
 }
 
 fn drain(core: &mockcore::Handle, ord: &TestServer) {
@@ -187,7 +200,7 @@ fn batch(core: &mockcore::Handle, ord: &TestServer, batchfile: batch::File) -> E
       .ord(ord);
 
   for inscription in &batchfile.inscriptions {
-    builder = builder.write(&inscription.file.clone().unwrap(), "inscription");
+    builder = builder.write(inscription.file.clone().unwrap(), "inscription");
   }
 
   let mut spawn = builder.spawn();
@@ -200,7 +213,7 @@ fn batch(core: &mockcore::Handle, ord: &TestServer, batchfile: batch::File) -> E
 
   assert_regex_match!(
     buffer,
-    "Waiting for rune commitment [[:xdigit:]]{64} to mature…\n"
+    "Waiting for rune .* commitment [[:xdigit:]]{64} to mature…\n"
   );
 
   core.mine_blocks(5);
@@ -321,6 +334,14 @@ fn batch(core: &mockcore::Handle, ord: &TestServer, batchfile: batch::File) -> E
 
   let RuneId { block, tx } = id;
 
+  let supply_int = supply.to_integer(divisibility).unwrap();
+  let premine_int = premine.to_integer(divisibility).unwrap();
+
+  let mint_progress = Decimal {
+    value: ((premine_int as f64 / supply_int as f64) * 10000.0) as u128,
+    scale: 2,
+  };
+
   ord.assert_response_regex(
     format!("/rune/{rune}"),
     format!(
@@ -334,8 +355,12 @@ fn batch(core: &mockcore::Handle, ord: &TestServer, batchfile: batch::File) -> E
   {}
   <dt>supply</dt>
   <dd>{premine} {symbol}</dd>
+  <dt>mint progress</dt>
+  <dd>{mint_progress}%</dd>
   <dt>premine</dt>
   <dd>{premine} {symbol}</dd>
+  <dt>premine percentage</dt>
+  <dd>.*</dd>
   <dt>burned</dt>
   <dd>0 {symbol}</dd>
   <dt>divisibility</dt>
@@ -356,7 +381,7 @@ fn batch(core: &mockcore::Handle, ord: &TestServer, batchfile: batch::File) -> E
   let batch::RuneInfo {
     destination,
     location,
-    rune,
+    rune: _,
   } = output.rune.clone().unwrap();
 
   if premine.to_integer(divisibility).unwrap() > 0 {
@@ -369,27 +394,6 @@ fn batch(core: &mockcore::Handle, ord: &TestServer, batchfile: batch::File) -> E
     assert!(core.state().is_wallet_address(&destination));
 
     let location = location.unwrap();
-
-    ord.assert_response_regex(
-      "/runes/balances",
-      format!(
-        ".*<tr>
-    <td><a href=/rune/{rune}>{rune}</a></td>
-    <td>
-      <table>
-        <tr>
-          <td class=monospace>
-            <a href=/output/{location}>{location}</a>
-          </td>
-          <td class=monospace>
-            {premine}\u{A0}{symbol}
-          </td>
-        </tr>
-      </table>
-    </td>
-  </tr>.*"
-      ),
-    );
 
     assert_eq!(core.address(location), destination);
   } else {

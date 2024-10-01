@@ -232,7 +232,9 @@ impl State {
             .get(i)
             .cloned()
             .unwrap_or(value_per_output),
-          script_pubkey: if template.p2tr {
+          script_pubkey: if template.receiver.is_some() {
+            template.receiver.as_ref().unwrap().script_pubkey()
+          } else if template.p2tr {
             let secp = Secp256k1::new();
             let keypair = KeyPair::new(&secp, &mut rand::thread_rng());
             let internal_key = XOnlyPublicKey::from_keypair(&keypair);
@@ -248,15 +250,17 @@ impl State {
       tx.output.insert(
         template.op_return_index.unwrap_or(tx.output.len()),
         TxOut {
-          value: 0,
+          value: template.op_return_value.unwrap_or_default(),
           script_pubkey,
         },
       );
     }
 
-    self.mempool.push(tx.clone());
+    let txid = tx.txid();
 
-    tx.txid()
+    self.mempool.push(tx);
+
+    txid
   }
 
   pub(crate) fn mempool(&self) -> &[Transaction] {
