@@ -8,7 +8,13 @@ CHAIN=$1
 DOMAIN=$2
 BRANCH=$3
 COMMIT=$4
+SKIP_BOOT_ORD=$5
 REVISION="ord-$BRANCH-$COMMIT"
+
+if [ -z "$SKIP_BOOT_ORD" ]; then
+  echo "No argument provided for SKIP_BOOT_ORD. Proceeding to boot ord server."
+  SKIP_BOOT_ORD="false"
+fi
 
 export DEBIAN_FRONTEND=noninteractive
 
@@ -25,22 +31,22 @@ apt-get install --yes \
   locales-all \
   pkg-config \
   ufw \
-  vim
+  vim \
+  tor
 
 apt-get remove --yes --auto-remove
 
 ufw default allow outgoing
 ufw default deny incoming
 
-ufw allow 8080
 ufw allow http
-ufw allow https
+# ufw allow https
 ufw allow ssh
 
 case $CHAIN in
   main)
     COOKIE_FILE_DIR=/var/lib/bitcoind
-    CSP_ORIGIN=ordinals.com
+    CSP_ORIGIN=node.wizards.art
     ufw allow 8333
     ;;
   regtest)
@@ -84,7 +90,7 @@ fi
 
 bitcoind --version
 
-chown bitcoin:bitcoin /var/lib/bitcoind/settings.json
+# FIXME: bitcoin user/group does not exist at this point
 
 if [[ ! -e ~/.cargo/env ]]; then
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
@@ -100,14 +106,25 @@ install --backup target/release/ord /usr/local/bin/ord
 id --user bitcoin || useradd --system bitcoin
 id --user ord || useradd --system ord
 
+cp deploy/torcc /etc/tor/torrc
+chmod 755 /etc/tor/torrc
+usermod -aG debian-tor bitcoin
+systemctl restart tor
+
 cp deploy/bitcoind.service /etc/systemd/system/
 
 mkdir -p /etc/bitcoin
 cp deploy/bitcoin.conf /etc/bitcoin/bitcoin.conf
+chown bitcoin:bitcoin /etc/bitcoin/bitcoin.conf
+
+mkdir -p /var/lib/bitcoind
+cp deploy/settings.json /var/lib/bitcoind/settings.json
+chown bitcoin:bitcoin /var/lib/bitcoind/settings.json
 
 if [[ ! -e ~/.bitcoin/bitcoin.conf ]]; then
   mkdir -p ~/.bitcoin
   ln -s /etc/bitcoin/bitcoin.conf ~/.bitcoin/bitcoin.conf
+  chown -R bitcoin:bitcoin ~/.bitcoin
 fi
 
 systemctl daemon-reload
@@ -127,11 +144,16 @@ setfacl -m ord:r $COOKIE_FILE_DIR/.cookie
 journalctl --unit ord --vacuum-time 1s
 
 cp deploy/ord.service /etc/systemd/system/
-systemctl daemon-reload
-systemctl enable ord
-systemctl restart ord
 
-while ! curl --fail https://$DOMAIN/status > /dev/null; do
-  echo "Waiting for ord at https://$DOMAIN/status…"
-  sleep 1
-done
+mkdir -p /var/lib/ord
+chown -R ord:ord /var/lib/ord
+
+if [ "$SKIP_BOOT_ORD" == "true" ]; then
+  echo "Skipping booting ord server. Please start after loading the index."
+else
+  echo "Booting ord server..."
+
+  systemctl daemon-reload
+  systemctl enable ord
+  systemctl restart ord
+fi
