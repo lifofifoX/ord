@@ -4,9 +4,11 @@ on:
   push:
     branches:
     - master
+    - ordnet
   pull_request:
     branches:
     - master
+    - ordnet
 
 defaults:
   run:

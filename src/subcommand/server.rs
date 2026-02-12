@@ -449,7 +449,15 @@ impl Server {
       }
     };
 
-    let addr = (address, port)
+    // In test mode, avoid binding privileged HTTPS port 443 while preserving
+    // the configured port value used for redirect URL generation.
+    let bind_port = if cfg!(test) && matches!(&config, SpawnConfig::Https(_)) && port == 443 {
+      0
+    } else {
+      port
+    };
+
+    let addr = (address, bind_port)
       .to_socket_addrs()?
       .next()
       .ok_or_else(|| anyhow!("failed to get socket addrs"))?;
