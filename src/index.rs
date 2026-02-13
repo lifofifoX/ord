@@ -53,7 +53,12 @@ mod utxo_entry;
 #[cfg(test)]
 pub(crate) mod testing;
 
+#[cfg(test)]
+#[path = "index/brc20_filter_tests.rs"]
+mod brc20_filter_tests;
+
 const SCHEMA_VERSION: u64 = 33;
+pub(crate) const EXCLUDE_BRC20: bool = true;
 
 define_multimap_table! { LATEST_CHILD_SEQUENCE_NUMBER_TO_COLLECTION_SEQUENCE_NUMBER, u32, u32 }
 define_multimap_table! { SAT_TO_SEQUENCE_NUMBER, u64, u32 }
@@ -67,6 +72,7 @@ define_table! { HOME_INSCRIPTIONS, u32, InscriptionIdValue }
 define_table! { INSCRIPTION_ID_TO_SEQUENCE_NUMBER, InscriptionIdValue, u32 }
 define_table! { INSCRIPTION_NUMBER_TO_SEQUENCE_NUMBER, i32, u32 }
 define_table! { NUMBER_TO_OFFER, u64, &[u8] }
+define_table! { OUTPOINT_TO_FILTERED_INSCRIPTION_DATA, &OutPointValue, &[u8] }
 define_table! { OUTPOINT_TO_RUNE_BALANCES, &OutPointValue, &[u8] }
 define_table! { OUTPOINT_TO_UTXO_ENTRY, &OutPointValue, &UtxoEntry }
 define_table! { RUNE_ID_TO_RUNE_ENTRY, RuneIdValue, RuneEntryValue }
@@ -99,6 +105,7 @@ pub(crate) enum Statistic {
   SatRanges = 14,
   UnboundInscriptions = 16,
   LastSavepointHeight = 17,
+  IndexExcludeBrc20 = 18,
 }
 
 impl Statistic {
@@ -210,6 +217,7 @@ pub struct Index {
   index_inscriptions: bool,
   index_runes: bool,
   index_sats: bool,
+  exclude_brc20: bool,
   index_transactions: bool,
   path: PathBuf,
   settings: Settings,
@@ -299,6 +307,7 @@ impl Index {
         let tx = database.begin_write()?;
 
         tx.open_table(NUMBER_TO_OFFER)?;
+        tx.open_table(OUTPOINT_TO_FILTERED_INSCRIPTION_DATA)?;
 
         tx.commit()?;
 
@@ -330,6 +339,7 @@ impl Index {
         tx.open_table(INSCRIPTION_ID_TO_SEQUENCE_NUMBER)?;
         tx.open_table(INSCRIPTION_NUMBER_TO_SEQUENCE_NUMBER)?;
         tx.open_table(NUMBER_TO_OFFER)?;
+        tx.open_table(OUTPOINT_TO_FILTERED_INSCRIPTION_DATA)?;
         tx.open_table(OUTPOINT_TO_RUNE_BALANCES)?;
         tx.open_table(OUTPOINT_TO_UTXO_ENTRY)?;
         tx.open_table(RUNE_ID_TO_RUNE_ENTRY)?;
@@ -372,6 +382,12 @@ impl Index {
             &mut statistics,
             Statistic::IndexTransactions,
             u64::from(settings.index_transactions_raw()),
+          )?;
+
+          Self::set_statistic(
+            &mut statistics,
+            Statistic::IndexExcludeBrc20,
+            u64::from(EXCLUDE_BRC20),
           )?;
 
           Self::set_statistic(&mut statistics, Statistic::Schema, SCHEMA_VERSION)?;
@@ -433,6 +449,7 @@ impl Index {
     let index_sats;
     let index_transactions;
     let index_inscriptions;
+    let index_exclude_brc20;
 
     {
       let tx = database.begin_read()?;
@@ -442,6 +459,14 @@ impl Index {
       index_runes = Self::is_statistic_set(&statistics, Statistic::IndexRunes)?;
       index_sats = Self::is_statistic_set(&statistics, Statistic::IndexSats)?;
       index_transactions = Self::is_statistic_set(&statistics, Statistic::IndexTransactions)?;
+      index_exclude_brc20 = Self::is_statistic_set(&statistics, Statistic::IndexExcludeBrc20)?;
+    }
+
+    if index_exclude_brc20 != EXCLUDE_BRC20 {
+      bail!(
+        "index at `{}` has incompatible BRC-20 exclusion mode, rebuild the index with this fork or use a separate index path",
+        path.display()
+      );
     }
 
     let genesis_block_coinbase_transaction =
@@ -469,6 +494,7 @@ impl Index {
       index_addresses,
       index_runes,
       index_sats,
+      exclude_brc20: EXCLUDE_BRC20,
       index_transactions,
       index_inscriptions,
       settings: settings.clone(),
