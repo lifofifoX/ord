@@ -35,3 +35,24 @@
 ## Compatibility Note
 - Indexes built with different BRC-20 exclusion modes are not compatible.
 - If switching between upstream `ord` behavior and `ordnet` behavior, rebuild or use separate index paths.
+
+## Transfer History Field Semantics
+- Transfer history rows are only written when `--index-addresses` is enabled.
+- `from_script_pubkey` (stored event field):
+  - Creation (`Origin::New`, non-unbound): stored as empty bytes `[]` (because sender is `None`).
+  - Normal transfer (`Origin::Old`): stored as previous input script pubkey bytes.
+  - Burn (`OP_RETURN`): still stores sender script pubkey bytes.
+- `to_script_pubkey` (stored event field):
+  - Normal transfer: destination output script pubkey bytes.
+  - Burn (`OP_RETURN`): forced to `None`.
+  - Lost/null special destination: always `None` (call site passes `None`).
+- `old_satpoint`:
+  - Creation row: `None`.
+  - Transfer row: `Some(previous_outpoint:offset)`.
+- `new_satpoint`:
+  - Always set for written rows (creation + transfer).
+- `spent_as_fee_in_txid`:
+  - Set only when new location is in a coinbase tx outpoint (`coinbase_txid:vout`) and the inscription entered coinbase as fees.
+  - `None` for regular transfers, creation rows, and coinbase special outpoints (lost/null/unbound path).
+- Unbound creation:
+  - No transfer history row is written.

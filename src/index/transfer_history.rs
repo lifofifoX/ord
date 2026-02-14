@@ -7,6 +7,9 @@ pub struct InscriptionTransferHistoryEntry {
   pub sequence_number: u32,
   pub from_address: Option<String>,
   pub to_address: Option<String>,
+  pub old_satpoint: Option<SatPoint>,
+  pub new_satpoint: SatPoint,
+  pub spent_as_fee_in_txid: Option<Txid>,
 }
 
 impl Index {
@@ -165,6 +168,9 @@ impl Index {
         .to_script_pubkey
         .as_deref()
         .and_then(|script_pubkey| self.script_pubkey_to_address(script_pubkey)),
+      old_satpoint: event.old_satpoint,
+      new_satpoint: event.new_satpoint,
+      spent_as_fee_in_txid: event.spent_as_fee_in_txid,
     })
   }
 

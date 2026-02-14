@@ -20,6 +20,9 @@ pub(super) fn index_transfer_history_event(
   sender_script_pubkey: Option<&[u8]>,
   destination_script_pubkey: Option<&[u8]>,
   op_return: bool,
+  old_satpoint: Option<SatPoint>,
+  new_satpoint: SatPoint,
+  spent_as_fee_in_txid: Option<Txid>,
 ) -> Result {
   if !index.index_addresses {
     return Ok(());
@@ -50,6 +53,9 @@ pub(super) fn index_transfer_history_event(
       sequence_number,
       from_script_pubkey: sender_script_pubkey.clone().unwrap_or_default(),
       to_script_pubkey: destination_script_pubkey.clone(),
+      old_satpoint,
+      new_satpoint,
+      spent_as_fee_in_txid,
     }
     .store(),
   )?;

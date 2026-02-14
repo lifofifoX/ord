@@ -81,14 +81,168 @@ fn inscription_transfer_history_records_and_orders_newest_first() {
   assert_eq!(history[0].inscription_id, inscription_id);
   assert_eq!(history[0].from_address, Some(transfer_1_address.clone()));
   assert_eq!(history[0].to_address, Some(transfer_2_address));
+  assert_eq!(
+    history[0].old_satpoint,
+    Some(SatPoint {
+      outpoint: OutPoint {
+        txid: transfer_1_txid,
+        vout: 0,
+      },
+      offset: 0,
+    })
+  );
+  assert_eq!(
+    history[0].new_satpoint,
+    SatPoint {
+      outpoint: OutPoint {
+        txid: transfer_2_txid,
+        vout: 0,
+      },
+      offset: 0,
+    }
+  );
+  assert_eq!(history[0].spent_as_fee_in_txid, None);
 
   assert_eq!(history[1].inscription_id, inscription_id);
   assert_eq!(history[1].from_address, Some(create_address.clone()));
   assert_eq!(history[1].to_address, Some(transfer_1_address));
+  assert_eq!(
+    history[1].old_satpoint,
+    Some(SatPoint {
+      outpoint: OutPoint {
+        txid: create_txid,
+        vout: 0,
+      },
+      offset: 0,
+    })
+  );
+  assert_eq!(
+    history[1].new_satpoint,
+    SatPoint {
+      outpoint: OutPoint {
+        txid: transfer_1_txid,
+        vout: 0,
+      },
+      offset: 0,
+    }
+  );
+  assert_eq!(history[1].spent_as_fee_in_txid, None);
 
   assert_eq!(history[2].inscription_id, inscription_id);
   assert_eq!(history[2].from_address, None);
   assert_eq!(history[2].to_address, Some(create_address));
+  assert_eq!(history[2].old_satpoint, None);
+  assert_eq!(
+    history[2].new_satpoint,
+    SatPoint {
+      outpoint: OutPoint {
+        txid: create_txid,
+        vout: 0,
+      },
+      offset: 0,
+    }
+  );
+  assert_eq!(history[2].spent_as_fee_in_txid, None);
+}
+
+#[test]
+fn same_transaction_transfers_are_disambiguated_by_satpoints() {
+  let context = Context::builder().arg("--index-addresses").build();
+
+  context.mine_blocks(2);
+
+  let create_1_txid = context.core.broadcast_tx(TransactionTemplate {
+    inputs: &[(1, 0, 0, inscription("text/plain", "hello-1").to_witness())],
+    outputs: 1,
+    ..default()
+  });
+
+  context.mine_blocks(1);
+
+  let create_2_txid = context.core.broadcast_tx(TransactionTemplate {
+    inputs: &[(2, 0, 0, inscription("text/plain", "hello-2").to_witness())],
+    outputs: 1,
+    ..default()
+  });
+
+  context.mine_blocks(1);
+
+  let transfer_txid = context.core.broadcast_tx(TransactionTemplate {
+    inputs: &[(3, 1, 0, Witness::new()), (4, 1, 0, Witness::new())],
+    outputs: 1,
+    ..default()
+  });
+
+  context.mine_blocks(1);
+
+  let inscription_1_id = InscriptionId {
+    txid: create_1_txid,
+    index: 0,
+  };
+
+  let inscription_2_id = InscriptionId {
+    txid: create_2_txid,
+    index: 0,
+  };
+
+  let (history_1, history_1_more) = context
+    .index
+    .get_inscription_transfer_history_paginated(inscription_1_id, 10, 0)
+    .unwrap();
+
+  let (history_2, history_2_more) = context
+    .index
+    .get_inscription_transfer_history_paginated(inscription_2_id, 10, 0)
+    .unwrap();
+
+  assert!(!history_1_more);
+  assert!(!history_2_more);
+
+  assert_eq!(
+    history_1[0].old_satpoint,
+    Some(SatPoint {
+      outpoint: OutPoint {
+        txid: create_1_txid,
+        vout: 0,
+      },
+      offset: 0,
+    })
+  );
+  assert_eq!(
+    history_2[0].old_satpoint,
+    Some(SatPoint {
+      outpoint: OutPoint {
+        txid: create_2_txid,
+        vout: 0,
+      },
+      offset: 0,
+    })
+  );
+
+  assert_eq!(
+    history_1[0].new_satpoint,
+    SatPoint {
+      outpoint: OutPoint {
+        txid: transfer_txid,
+        vout: 0,
+      },
+      offset: 0,
+    }
+  );
+
+  assert_eq!(
+    history_2[0].new_satpoint,
+    SatPoint {
+      outpoint: OutPoint {
+        txid: transfer_txid,
+        vout: 0,
+      },
+      offset: 50 * COIN_VALUE,
+    }
+  );
+
+  assert_eq!(history_1[0].spent_as_fee_in_txid, None);
+  assert_eq!(history_2[0].spent_as_fee_in_txid, None);
 }
 
 #[test]
@@ -591,6 +745,118 @@ fn sender_receiver_same_script_is_deduped() {
   assert_eq!(history[0].to_address, Some(address.to_string()));
   assert_eq!(history[1].from_address, None);
   assert_eq!(history[1].to_address, Some(address.to_string()));
+}
+
+#[test]
+fn fee_spent_transfer_to_coinbase_records_fee_origin_txid() {
+  let context = Context::builder().arg("--index-addresses").build();
+
+  context.mine_blocks(1);
+
+  let create_txid = context.core.broadcast_tx(TransactionTemplate {
+    inputs: &[(1, 0, 0, inscription("text/plain", "hello").to_witness())],
+    outputs: 1,
+    ..default()
+  });
+
+  context.mine_blocks(1);
+
+  let inscription_id = InscriptionId {
+    txid: create_txid,
+    index: 0,
+  };
+
+  let fee_spend_txid = context.core.broadcast_tx(TransactionTemplate {
+    inputs: &[(2, 1, 0, Witness::new())],
+    fee: 50 * COIN_VALUE,
+    ..default()
+  });
+
+  let coinbase_txid = context.mine_blocks(1)[0].txdata[0].compute_txid();
+
+  let (history, more) = context
+    .index
+    .get_inscription_transfer_history_paginated(inscription_id, 10, 0)
+    .unwrap();
+
+  assert!(!more);
+  assert_eq!(history.len(), 2);
+  assert_eq!(
+    history[0].old_satpoint,
+    Some(SatPoint {
+      outpoint: OutPoint {
+        txid: create_txid,
+        vout: 0,
+      },
+      offset: 0,
+    })
+  );
+  assert_eq!(
+    history[0].new_satpoint,
+    SatPoint {
+      outpoint: OutPoint {
+        txid: coinbase_txid,
+        vout: 0,
+      },
+      offset: 50 * COIN_VALUE,
+    }
+  );
+  assert_eq!(history[0].spent_as_fee_in_txid, Some(fee_spend_txid));
+  assert_eq!(history[1].spent_as_fee_in_txid, None);
+}
+
+#[test]
+fn fee_spent_transfer_lost_path_does_not_record_fee_origin_txid() {
+  let context = Context::builder().arg("--index-addresses").build();
+
+  context.mine_blocks(1);
+
+  let create_txid = context.core.broadcast_tx(TransactionTemplate {
+    inputs: &[(1, 0, 0, inscription("text/plain", "hello").to_witness())],
+    outputs: 1,
+    ..default()
+  });
+
+  context.mine_blocks(1);
+
+  let inscription_id = InscriptionId {
+    txid: create_txid,
+    index: 0,
+  };
+
+  context.core.broadcast_tx(TransactionTemplate {
+    inputs: &[(2, 1, 0, Witness::new())],
+    fee: 50 * COIN_VALUE,
+    ..default()
+  });
+
+  context.mine_blocks_with_subsidy(1, 0);
+
+  let (history, more) = context
+    .index
+    .get_inscription_transfer_history_paginated(inscription_id, 10, 0)
+    .unwrap();
+
+  assert!(!more);
+  assert_eq!(history.len(), 2);
+  assert_eq!(
+    history[0].old_satpoint,
+    Some(SatPoint {
+      outpoint: OutPoint {
+        txid: create_txid,
+        vout: 0,
+      },
+      offset: 0,
+    })
+  );
+  assert_eq!(
+    history[0].new_satpoint,
+    SatPoint {
+      outpoint: OutPoint::null(),
+      offset: 0,
+    }
+  );
+  assert_eq!(history[0].spent_as_fee_in_txid, None);
 }
 
 #[test]

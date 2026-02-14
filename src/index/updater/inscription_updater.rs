@@ -23,6 +23,7 @@ pub(super) struct Flotsam {
   inscription_id: Option<InscriptionId>,
   offset: u64,
   origin: Origin,
+  fee_origin_txid: Option<Txid>,
 }
 
 #[derive(Debug, Clone)]
@@ -155,6 +156,7 @@ impl InscriptionUpdater<'_, '_> {
             old_satpoint,
             sender_script_pubkey: sender_script_pubkey.clone(),
           },
+          fee_origin_txid: None,
         });
 
         inscribed_offsets
@@ -174,6 +176,7 @@ impl InscriptionUpdater<'_, '_> {
             origin: Origin::OldFiltered {
               cursed_or_vindicated: filtered.cursed_or_vindicated,
             },
+            fee_origin_txid: None,
           });
 
           inscribed_offsets
@@ -277,6 +280,7 @@ impl InscriptionUpdater<'_, '_> {
               || inscription.payload.unrecognized_even_field,
             vindicated: curse.is_some() && jubilant,
           },
+          fee_origin_txid: None,
         });
 
         if !filtered || self.track_filtered_inscription_data {
@@ -391,6 +395,7 @@ impl InscriptionUpdater<'_, '_> {
         input_sat_ranges,
         flotsam,
         new_satpoint,
+        is_coinbase,
         op_return,
         &mut filtered_inscription_data_cache,
         Some(destination_script_pubkey.as_slice()),
@@ -410,6 +415,7 @@ impl InscriptionUpdater<'_, '_> {
           input_sat_ranges,
           flotsam,
           new_satpoint,
+          is_coinbase,
           false,
           &mut filtered_inscription_data_cache,
           None,
@@ -423,6 +429,7 @@ impl InscriptionUpdater<'_, '_> {
     } else {
       self.flotsam.extend(inscriptions.map(|flotsam| Flotsam {
         offset: self.reward + flotsam.offset - output_value,
+        fee_origin_txid: Some(txid),
         ..flotsam
       }));
       self.reward += total_input_value - output_value;
@@ -457,6 +464,9 @@ impl InscriptionUpdater<'_, '_> {
     sender_script_pubkey: Option<&[u8]>,
     destination_script_pubkey: Option<&[u8]>,
     op_return: bool,
+    old_satpoint: Option<SatPoint>,
+    new_satpoint: SatPoint,
+    spent_as_fee_in_txid: Option<Txid>,
   ) -> Result {
     transfer_history_indexer::index_transfer_history_event(
       index,
@@ -469,6 +479,9 @@ impl InscriptionUpdater<'_, '_> {
       sender_script_pubkey,
       destination_script_pubkey,
       op_return,
+      old_satpoint,
+      new_satpoint,
+      spent_as_fee_in_txid,
     )
   }
 
@@ -477,6 +490,7 @@ impl InscriptionUpdater<'_, '_> {
     input_sat_ranges: Option<&Vec<&[u8]>>,
     flotsam: Flotsam,
     new_satpoint: SatPoint,
+    is_coinbase: bool,
     op_return: bool,
     filtered_inscription_data_cache: &mut Option<&mut HashMap<OutPoint, Vec<u8>>>,
     destination_script_pubkey: Option<&[u8]>,
@@ -488,7 +502,15 @@ impl InscriptionUpdater<'_, '_> {
       inscription_id,
       offset,
       origin,
+      fee_origin_txid,
     } = flotsam;
+
+    let spent_as_fee_in_txid = if is_coinbase && !Index::is_special_outpoint(new_satpoint.outpoint)
+    {
+      fee_origin_txid
+    } else {
+      None
+    };
 
     let (unbound, sequence_number) = match origin {
       Origin::Old {
@@ -532,6 +554,9 @@ impl InscriptionUpdater<'_, '_> {
           sender_script_pubkey.as_deref(),
           destination_script_pubkey,
           op_return,
+          Some(old_satpoint),
+          new_satpoint,
+          spent_as_fee_in_txid,
         )?;
 
         (false, sequence_number)
@@ -718,6 +743,9 @@ impl InscriptionUpdater<'_, '_> {
             None,
             destination_script_pubkey,
             op_return,
+            None,
+            new_satpoint,
+            spent_as_fee_in_txid,
           )?;
         }
 
