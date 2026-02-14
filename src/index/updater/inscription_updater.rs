@@ -2,7 +2,7 @@ use super::{
   inscription_updater_filtered::{
     InscribedOffset, parse_filtered_inscription_data, record_filtered_inscription_data,
   },
-  *,
+  transfer_history_indexer, *,
 };
 
 #[derive(Debug, PartialEq, Copy, Clone)]
@@ -41,6 +41,7 @@ enum Origin {
   Old {
     sequence_number: u32,
     old_satpoint: SatPoint,
+    sender_script_pubkey: Option<Vec<u8>>,
   },
   OldFiltered {
     cursed_or_vindicated: bool,
@@ -66,15 +67,19 @@ pub(super) struct InscriptionUpdater<'a, 'tx> {
   pub(super) home_inscription_count: u64,
   pub(super) home_inscriptions: &'a mut Table<'tx, u32, InscriptionIdValue>,
   pub(super) id_to_sequence_number: &'a mut Table<'tx, InscriptionIdValue, u32>,
+  pub(super) sequence_number_to_transfer_number: &'a mut MultimapTable<'tx, u32, u64>,
   pub(super) inscription_number_to_sequence_number: &'a mut Table<'tx, i32, u32>,
   pub(super) latest_child_to_collection: &'a mut MultimapTable<'tx, u32, u32>,
   pub(super) lost_sats: u64,
   pub(super) next_sequence_number: u32,
+  pub(super) next_transfer_number: u64,
   pub(super) reward: u64,
   pub(super) sat_to_sequence_number: &'a mut MultimapTable<'tx, u64, u32>,
+  pub(super) script_pubkey_to_transfer_number: &'a mut MultimapTable<'tx, &'static [u8], u64>,
   pub(super) sequence_number_to_children: &'a mut MultimapTable<'tx, u32, u32>,
   pub(super) sequence_number_to_entry: &'a mut Table<'tx, u32, InscriptionEntryValue>,
   pub(super) timestamp: u32,
+  pub(super) transfer_number_to_event: &'a mut Table<'tx, u64, InscriptionTransferEventValue>,
   pub(super) transaction_buffer: Vec<u8>,
   pub(super) transaction_id_to_transaction: &'a mut Table<'tx, &'static TxidValue, &'static [u8]>,
   pub(super) unbound_inscriptions: u64,
@@ -120,6 +125,12 @@ impl InscriptionUpdater<'_, '_> {
 
       transferred_inscriptions.sort_by_key(|(sequence_number, _)| *sequence_number);
 
+      let sender_script_pubkey = index
+        .index_addresses
+        .then(|| input_utxo_entries[input_index].script_pubkey())
+        .filter(|script_pubkey| !script_pubkey.is_empty())
+        .map(<[u8]>::to_vec);
+
       for (sequence_number, old_satpoint_offset) in transferred_inscriptions {
         let old_satpoint = SatPoint {
           outpoint: txin.previous_output,
@@ -142,6 +153,7 @@ impl InscriptionUpdater<'_, '_> {
           origin: Origin::Old {
             sequence_number,
             old_satpoint,
+            sender_script_pubkey: sender_script_pubkey.clone(),
           },
         });
 
@@ -364,13 +376,14 @@ impl InscriptionUpdater<'_, '_> {
           new_satpoint,
           inscriptions.next().unwrap(),
           txout.script_pubkey.is_op_return(),
+          txout.script_pubkey.as_bytes().to_vec(),
         ));
       }
 
       output_value = end;
     }
 
-    for (new_satpoint, flotsam, op_return) in new_locations.into_iter() {
+    for (new_satpoint, flotsam, op_return, destination_script_pubkey) in new_locations.into_iter() {
       let output_utxo_entry =
         &mut output_utxo_entries[usize::try_from(new_satpoint.outpoint.vout).unwrap()];
 
@@ -380,6 +393,7 @@ impl InscriptionUpdater<'_, '_> {
         new_satpoint,
         op_return,
         &mut filtered_inscription_data_cache,
+        Some(destination_script_pubkey.as_slice()),
         Some(output_utxo_entry),
         utxo_cache,
         index,
@@ -398,6 +412,7 @@ impl InscriptionUpdater<'_, '_> {
           new_satpoint,
           false,
           &mut filtered_inscription_data_cache,
+          None,
           None,
           utxo_cache,
           index,
@@ -435,6 +450,28 @@ impl InscriptionUpdater<'_, '_> {
     unreachable!()
   }
 
+  fn index_transfer_history_event(
+    &mut self,
+    index: &Index,
+    sequence_number: u32,
+    sender_script_pubkey: Option<&[u8]>,
+    destination_script_pubkey: Option<&[u8]>,
+    op_return: bool,
+  ) -> Result {
+    transfer_history_indexer::index_transfer_history_event(
+      index,
+      self.height,
+      &mut self.next_transfer_number,
+      &mut *self.sequence_number_to_transfer_number,
+      &mut *self.script_pubkey_to_transfer_number,
+      &mut *self.transfer_number_to_event,
+      sequence_number,
+      sender_script_pubkey,
+      destination_script_pubkey,
+      op_return,
+    )
+  }
+
   fn update_inscription_location(
     &mut self,
     input_sat_ranges: Option<&Vec<&[u8]>>,
@@ -442,6 +479,7 @@ impl InscriptionUpdater<'_, '_> {
     new_satpoint: SatPoint,
     op_return: bool,
     filtered_inscription_data_cache: &mut Option<&mut HashMap<OutPoint, Vec<u8>>>,
+    destination_script_pubkey: Option<&[u8]>,
     mut normal_output_utxo_entry: Option<&mut UtxoEntryBuf>,
     utxo_cache: &mut HashMap<OutPoint, UtxoEntryBuf>,
     index: &Index,
@@ -456,6 +494,7 @@ impl InscriptionUpdater<'_, '_> {
       Origin::Old {
         sequence_number,
         old_satpoint,
+        sender_script_pubkey,
       } => {
         let inscription_id = inscription_id.expect("old flotsam must have inscription ID");
 
@@ -486,6 +525,14 @@ impl InscriptionUpdater<'_, '_> {
             sequence_number,
           })?;
         }
+
+        self.index_transfer_history_event(
+          index,
+          sequence_number,
+          sender_script_pubkey.as_deref(),
+          destination_script_pubkey,
+          op_return,
+        )?;
 
         (false, sequence_number)
       }
@@ -663,6 +710,16 @@ impl InscriptionUpdater<'_, '_> {
         self
           .id_to_sequence_number
           .insert(&inscription_id.store(), sequence_number)?;
+
+        if !unbound {
+          self.index_transfer_history_event(
+            index,
+            sequence_number,
+            None,
+            destination_script_pubkey,
+            op_return,
+          )?;
+        }
 
         if !hidden {
           self

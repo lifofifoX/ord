@@ -11,6 +11,7 @@ use {
 mod inscription_updater;
 mod inscription_updater_filtered;
 mod rune_updater;
+mod transfer_history_indexer;
 
 pub(crate) struct BlockData {
   pub(crate) header: Header,
@@ -426,7 +427,10 @@ impl Updater<'_> {
       wtx.open_table(COLLECTION_SEQUENCE_NUMBER_TO_LATEST_CHILD_SEQUENCE_NUMBER)?;
     let mut gallery_sequence_numbers = wtx.open_table(GALLERY_SEQUENCE_NUMBERS)?;
     let mut height_to_last_sequence_number = wtx.open_table(HEIGHT_TO_LAST_SEQUENCE_NUMBER)?;
+    let mut height_to_last_transfer_number = wtx.open_table(HEIGHT_TO_LAST_TRANSFER_NUMBER)?;
     let mut home_inscriptions = wtx.open_table(HOME_INSCRIPTIONS)?;
+    let mut sequence_number_to_transfer_number =
+      wtx.open_multimap_table(SEQUENCE_NUMBER_TO_TRANSFER_NUMBER)?;
     let mut inscription_number_to_sequence_number =
       wtx.open_table(INSCRIPTION_NUMBER_TO_SEQUENCE_NUMBER)?;
     let mut latest_child_to_collection =
@@ -435,11 +439,14 @@ impl Updater<'_> {
       wtx.open_table(OUTPOINT_TO_FILTERED_INSCRIPTION_DATA)?;
     let mut outpoint_to_utxo_entry = wtx.open_table(OUTPOINT_TO_UTXO_ENTRY)?;
     let mut sat_to_satpoint = wtx.open_table(SAT_TO_SATPOINT)?;
+    let mut script_pubkey_to_transfer_number =
+      wtx.open_multimap_table(SCRIPT_PUBKEY_TO_TRANSFER_NUMBER)?;
     let mut sat_to_sequence_number = wtx.open_multimap_table(SAT_TO_SEQUENCE_NUMBER)?;
     let mut script_pubkey_to_outpoint = wtx.open_multimap_table(SCRIPT_PUBKEY_TO_OUTPOINT)?;
     let mut sequence_number_to_children = wtx.open_multimap_table(SEQUENCE_NUMBER_TO_CHILDREN)?;
     let mut sequence_number_to_inscription_entry =
       wtx.open_table(SEQUENCE_NUMBER_TO_INSCRIPTION_ENTRY)?;
+    let mut transfer_number_to_event = wtx.open_table(TRANSFER_NUMBER_TO_EVENT)?;
     let mut transaction_id_to_transaction = wtx.open_table(TRANSACTION_ID_TO_TRANSACTION)?;
 
     let index_inscriptions = self.height >= self.index.settings.first_inscription_height()
@@ -519,6 +526,13 @@ impl Updater<'_> {
       .map(|(number, _id)| number.value() + 1)
       .unwrap_or(0);
 
+    let next_transfer_number = transfer_number_to_event
+      .iter()?
+      .next_back()
+      .transpose()?
+      .map(|(number, _event)| number.value() + 1)
+      .unwrap_or(0);
+
     let home_inscription_count = home_inscriptions.len()?;
 
     let mut inscription_updater = InscriptionUpdater {
@@ -531,15 +545,19 @@ impl Updater<'_> {
       home_inscription_count,
       home_inscriptions: &mut home_inscriptions,
       id_to_sequence_number: inscription_id_to_sequence_number,
+      sequence_number_to_transfer_number: &mut sequence_number_to_transfer_number,
       inscription_number_to_sequence_number: &mut inscription_number_to_sequence_number,
       latest_child_to_collection: &mut latest_child_to_collection,
       lost_sats,
       next_sequence_number,
+      next_transfer_number,
       reward: Height(self.height).subsidy(),
       sat_to_sequence_number: &mut sat_to_sequence_number,
+      script_pubkey_to_transfer_number: &mut script_pubkey_to_transfer_number,
       sequence_number_to_children: &mut sequence_number_to_children,
       sequence_number_to_entry: &mut sequence_number_to_inscription_entry,
       timestamp: block.header.time,
+      transfer_number_to_event: &mut transfer_number_to_event,
       transaction_buffer: Vec::new(),
       transaction_id_to_transaction: &mut transaction_id_to_transaction,
       unbound_inscriptions,
@@ -702,6 +720,8 @@ impl Updater<'_> {
     if index_inscriptions {
       height_to_last_sequence_number
         .insert(&self.height, inscription_updater.next_sequence_number)?;
+      height_to_last_transfer_number
+        .insert(&self.height, &inscription_updater.next_transfer_number)?;
     }
 
     if !lost_sat_ranges.is_empty() {

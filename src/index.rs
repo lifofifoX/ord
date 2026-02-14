@@ -7,6 +7,7 @@ use {
     event::Event,
     lot::Lot,
     reorg::Reorg,
+    transfer_event::{InscriptionTransferEvent, InscriptionTransferEventValue},
     updater::Updater,
     utxo_entry::{ParsedUtxoEntry, UtxoEntry, UtxoEntryBuf},
   },
@@ -39,7 +40,7 @@ use {
   },
 };
 
-pub use self::entry::RuneEntry;
+pub use self::{entry::RuneEntry, transfer_history::InscriptionTransferHistoryEntry};
 
 pub(crate) mod entry;
 pub mod event;
@@ -47,6 +48,8 @@ mod fetcher;
 mod lot;
 mod reorg;
 mod rtx;
+mod transfer_event;
+mod transfer_history;
 mod updater;
 mod utxo_entry;
 
@@ -57,17 +60,24 @@ pub(crate) mod testing;
 #[path = "index/brc20_filter_tests.rs"]
 mod brc20_filter_tests;
 
+#[cfg(test)]
+#[path = "index/transfer_history_tests.rs"]
+mod transfer_history_tests;
+
 const SCHEMA_VERSION: u64 = 33;
 pub(crate) const EXCLUDE_BRC20: bool = true;
 
 define_multimap_table! { LATEST_CHILD_SEQUENCE_NUMBER_TO_COLLECTION_SEQUENCE_NUMBER, u32, u32 }
+define_multimap_table! { SEQUENCE_NUMBER_TO_TRANSFER_NUMBER, u32, u64 }
 define_multimap_table! { SAT_TO_SEQUENCE_NUMBER, u64, u32 }
+define_multimap_table! { SCRIPT_PUBKEY_TO_TRANSFER_NUMBER, &[u8], u64 }
 define_multimap_table! { SCRIPT_PUBKEY_TO_OUTPOINT, &[u8], OutPointValue }
 define_multimap_table! { SEQUENCE_NUMBER_TO_CHILDREN, u32, u32 }
 define_table! { COLLECTION_SEQUENCE_NUMBER_TO_LATEST_CHILD_SEQUENCE_NUMBER, u32, u32 }
 define_table! { GALLERY_SEQUENCE_NUMBERS, u32, () }
 define_table! { HEIGHT_TO_BLOCK_HEADER, u32, &HeaderValue }
 define_table! { HEIGHT_TO_LAST_SEQUENCE_NUMBER, u32, u32 }
+define_table! { HEIGHT_TO_LAST_TRANSFER_NUMBER, u32, u64 }
 define_table! { HOME_INSCRIPTIONS, u32, InscriptionIdValue }
 define_table! { INSCRIPTION_ID_TO_SEQUENCE_NUMBER, InscriptionIdValue, u32 }
 define_table! { INSCRIPTION_NUMBER_TO_SEQUENCE_NUMBER, i32, u32 }
@@ -82,6 +92,7 @@ define_table! { SEQUENCE_NUMBER_TO_INSCRIPTION_ENTRY, u32, InscriptionEntryValue
 define_table! { SEQUENCE_NUMBER_TO_RUNE_ID, u32, RuneIdValue }
 define_table! { SEQUENCE_NUMBER_TO_SATPOINT, u32, &SatPointValue }
 define_table! { STATISTIC_TO_COUNT, u64, u64 }
+define_table! { TRANSFER_NUMBER_TO_EVENT, u64, InscriptionTransferEventValue }
 define_table! { TRANSACTION_ID_TO_RUNE, &TxidValue, u128 }
 define_table! { TRANSACTION_ID_TO_TRANSACTION, &TxidValue, &[u8] }
 define_table! { WRITE_TRANSACTION_STARTING_BLOCK_COUNT_TO_TIMESTAMP, u32, u128 }
@@ -328,13 +339,16 @@ impl Index {
         tx.set_quick_repair(true);
 
         tx.open_multimap_table(LATEST_CHILD_SEQUENCE_NUMBER_TO_COLLECTION_SEQUENCE_NUMBER)?;
+        tx.open_multimap_table(SEQUENCE_NUMBER_TO_TRANSFER_NUMBER)?;
         tx.open_multimap_table(SAT_TO_SEQUENCE_NUMBER)?;
+        tx.open_multimap_table(SCRIPT_PUBKEY_TO_TRANSFER_NUMBER)?;
         tx.open_multimap_table(SCRIPT_PUBKEY_TO_OUTPOINT)?;
         tx.open_multimap_table(SEQUENCE_NUMBER_TO_CHILDREN)?;
         tx.open_table(COLLECTION_SEQUENCE_NUMBER_TO_LATEST_CHILD_SEQUENCE_NUMBER)?;
         tx.open_table(GALLERY_SEQUENCE_NUMBERS)?;
         tx.open_table(HEIGHT_TO_BLOCK_HEADER)?;
         tx.open_table(HEIGHT_TO_LAST_SEQUENCE_NUMBER)?;
+        tx.open_table(HEIGHT_TO_LAST_TRANSFER_NUMBER)?;
         tx.open_table(HOME_INSCRIPTIONS)?;
         tx.open_table(INSCRIPTION_ID_TO_SEQUENCE_NUMBER)?;
         tx.open_table(INSCRIPTION_NUMBER_TO_SEQUENCE_NUMBER)?;
@@ -350,6 +364,7 @@ impl Index {
         tx.open_table(SEQUENCE_NUMBER_TO_SATPOINT)?;
         tx.open_table(TRANSACTION_ID_TO_RUNE)?;
         tx.open_table(WRITE_TRANSACTION_STARTING_BLOCK_COUNT_TO_TIMESTAMP)?;
+        tx.open_table(TRANSFER_NUMBER_TO_EVENT)?;
 
         {
           let mut statistics = tx.open_table(STATISTIC_TO_COUNT)?;
