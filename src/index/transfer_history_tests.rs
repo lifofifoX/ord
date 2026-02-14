@@ -592,3 +592,56 @@ fn sender_receiver_same_script_is_deduped() {
   assert_eq!(history[1].from_address, None);
   assert_eq!(history[1].to_address, Some(address.to_string()));
 }
+
+#[test]
+fn unbound_inscription_creation_has_no_transfer_history_event() {
+  let context = Context::builder().arg("--index-addresses").build();
+
+  context.mine_blocks(1);
+
+  context.core.broadcast_tx(TransactionTemplate {
+    inputs: &[(1, 0, 0, Default::default())],
+    fee: 50 * COIN_VALUE,
+    ..default()
+  });
+
+  context.mine_blocks(1);
+
+  let txid = context.core.broadcast_tx(TransactionTemplate {
+    inputs: &[(2, 1, 0, inscription("text/plain", "hello").to_witness())],
+    ..default()
+  });
+
+  context.mine_blocks(1);
+
+  let inscription_id = InscriptionId { txid, index: 0 };
+
+  let (history, more) = context
+    .index
+    .get_inscription_transfer_history_paginated(inscription_id, 10, 0)
+    .unwrap();
+
+  assert!(!more);
+  assert!(history.is_empty());
+
+  let create_transaction = context.index.get_transaction(txid).unwrap().unwrap();
+  let destination_address = context
+    .index
+    .settings
+    .chain()
+    .address_from_script(&create_transaction.output[0].script_pubkey)
+    .unwrap();
+
+  let (address_history, address_more) = context
+    .index
+    .get_address_transfer_history_paginated(&destination_address, 10, 0)
+    .unwrap()
+    .unwrap();
+
+  assert!(!address_more);
+  assert!(address_history.is_empty());
+
+  let rtx = context.index.database.begin_read().unwrap();
+  let transfer_number_to_event = rtx.open_table(TRANSFER_NUMBER_TO_EVENT).unwrap();
+  assert_eq!(transfer_number_to_event.len().unwrap(), 0);
+}

@@ -711,13 +711,15 @@ impl InscriptionUpdater<'_, '_> {
           .id_to_sequence_number
           .insert(&inscription_id.store(), sequence_number)?;
 
-        self.index_transfer_history_event(
-          index,
-          sequence_number,
-          None,
-          destination_script_pubkey,
-          op_return,
-        )?;
+        if !unbound {
+          self.index_transfer_history_event(
+            index,
+            sequence_number,
+            None,
+            destination_script_pubkey,
+            op_return,
+          )?;
+        }
 
         if !hidden {
           self
