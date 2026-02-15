@@ -275,6 +275,18 @@ impl Server {
         .route("/search/{*query}", get(Self::search_by_path))
         .route("/static/{*path}", get(Self::static_asset))
         .route("/status", get(Self::status))
+        .route(
+          "/transfers/address/{address}/{page}",
+          get(r::address_transfers_paginated),
+        )
+        .route(
+          "/transfers/block/{height}/{page}",
+          get(r::block_transfers_paginated),
+        )
+        .route(
+          "/transfers/inscription/{inscription_id}/{page}",
+          get(r::inscription_transfers_paginated),
+        )
         .route("/tx/{txid}", get(Self::transaction))
         .route("/update", get(Self::update));
 
@@ -7335,6 +7347,122 @@ next
         .unwrap(),
       "no-store",
     );
+  }
+
+  #[test]
+  fn transfer_history_endpoints() {
+    let server = TestServer::builder()
+      .chain(Chain::Regtest)
+      .index_addresses()
+      .build();
+
+    server.mine_blocks(2);
+
+    let create_txid = server.core.broadcast_tx(TransactionTemplate {
+      inputs: &[(1, 0, 0, inscription("text/plain", "hello").to_witness())],
+      outputs: 1,
+      ..default()
+    });
+
+    server.mine_blocks(1);
+
+    let inscription_id = InscriptionId {
+      txid: create_txid,
+      index: 0,
+    };
+
+    let transfer_txid = server.core.broadcast_tx(TransactionTemplate {
+      inputs: &[(3, 1, 0, Witness::new())],
+      outputs: 1,
+      p2tr: true,
+      ..default()
+    });
+
+    server.mine_blocks(1);
+
+    let inscription_history =
+      server.get_json::<api::TransferHistory>(format!("/transfers/inscription/{inscription_id}/0"));
+
+    assert_eq!(inscription_history.page, 0);
+    assert!(!inscription_history.more);
+    assert_eq!(inscription_history.transfers.len(), 2);
+
+    let latest = &inscription_history.transfers[0];
+    assert_eq!(latest.inscription_id, inscription_id);
+    assert_eq!(
+      latest.old_satpoint,
+      Some(SatPoint {
+        outpoint: OutPoint {
+          txid: create_txid,
+          vout: 0,
+        },
+        offset: 0,
+      })
+    );
+    assert_eq!(
+      latest.new_satpoint,
+      SatPoint {
+        outpoint: OutPoint {
+          txid: transfer_txid,
+          vout: 0,
+        },
+        offset: 0,
+      }
+    );
+    assert!(latest.from_address.is_some());
+    assert!(latest.to_address.is_some());
+
+    let creation = &inscription_history.transfers[1];
+    assert_eq!(creation.inscription_id, inscription_id);
+    assert_eq!(creation.old_satpoint, None);
+    assert_eq!(
+      creation.new_satpoint,
+      SatPoint {
+        outpoint: OutPoint {
+          txid: create_txid,
+          vout: 0,
+        },
+        offset: 0,
+      }
+    );
+    assert_eq!(creation.from_address, None);
+    assert!(creation.to_address.is_some());
+
+    let sender_address = latest.from_address.clone().unwrap();
+    let receiver_address = latest.to_address.clone().unwrap();
+
+    let sender_history =
+      server.get_json::<api::TransferHistory>(format!("/transfers/address/{sender_address}/0"));
+    assert_eq!(sender_history.page, 0);
+    assert!(!sender_history.transfers.is_empty());
+    assert_eq!(sender_history.transfers[0].inscription_id, inscription_id);
+
+    let receiver_history =
+      server.get_json::<api::TransferHistory>(format!("/transfers/address/{receiver_address}/0"));
+    assert_eq!(receiver_history.page, 0);
+    assert!(!receiver_history.transfers.is_empty());
+    assert_eq!(receiver_history.transfers[0].inscription_id, inscription_id);
+
+    let block_height = latest.block_height;
+    let block_history =
+      server.get_json::<api::TransferHistory>(format!("/transfers/block/{block_height}/0"));
+
+    assert_eq!(block_history.page, 0);
+    assert!(block_history.transfers.iter().any(|entry| {
+      entry.inscription_id == inscription_id && entry.new_satpoint.outpoint.txid == transfer_txid
+    }));
+  }
+
+  #[test]
+  fn transfer_history_endpoints_require_address_index() {
+    TestServer::builder()
+      .chain(Chain::Regtest)
+      .build()
+      .assert_response(
+        "/transfers/block/0/0",
+        StatusCode::NOT_FOUND,
+        "this server has no address index",
+      );
   }
 
   #[test]

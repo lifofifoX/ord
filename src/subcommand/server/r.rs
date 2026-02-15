@@ -146,6 +146,88 @@ pub(super) async fn blocktime_string(
   })
 }
 
+pub(super) async fn inscription_transfers_paginated(
+  Extension(index): Extension<Arc<Index>>,
+  Path((inscription_id, page)): Path<(InscriptionId, usize)>,
+) -> ServerResult {
+  task::block_in_place(|| {
+    if !index.has_address_index() {
+      return Err(ServerError::NotFound(
+        "this server has no address index".to_string(),
+      ));
+    }
+
+    index
+      .get_inscription_entry(inscription_id)?
+      .ok_or_not_found(|| format!("inscription {inscription_id}"))?;
+
+    let (transfers, more) =
+      index.get_inscription_transfer_history_paginated(inscription_id, 100, page)?;
+
+    Ok(
+      Json(api::TransferHistory {
+        transfers: transfers.into_iter().map(Into::into).collect(),
+        more,
+        page,
+      })
+      .into_response(),
+    )
+  })
+}
+
+pub(super) async fn address_transfers_paginated(
+  Extension(index): Extension<Arc<Index>>,
+  Extension(server_config): Extension<Arc<ServerConfig>>,
+  Path((address, page)): Path<(Address<NetworkUnchecked>, usize)>,
+) -> ServerResult {
+  task::block_in_place(|| {
+    let address = address
+      .require_network(server_config.chain.network())
+      .map_err(|err| ServerError::BadRequest(err.to_string()))?;
+
+    let Some((transfers, more)) =
+      index.get_address_transfer_history_paginated(&address, 100, page)?
+    else {
+      return Err(ServerError::NotFound(
+        "this server has no address index".to_string(),
+      ));
+    };
+
+    Ok(
+      Json(api::TransferHistory {
+        transfers: transfers.into_iter().map(Into::into).collect(),
+        more,
+        page,
+      })
+      .into_response(),
+    )
+  })
+}
+
+pub(super) async fn block_transfers_paginated(
+  Extension(index): Extension<Arc<Index>>,
+  Path((height, page)): Path<(u32, usize)>,
+) -> ServerResult {
+  task::block_in_place(|| {
+    if !index.has_address_index() {
+      return Err(ServerError::NotFound(
+        "this server has no address index".to_string(),
+      ));
+    }
+
+    let (transfers, more) = index.get_transfer_history_in_block_paginated(height, 100, page)?;
+
+    Ok(
+      Json(api::TransferHistory {
+        transfers: transfers.into_iter().map(Into::into).collect(),
+        more,
+        page,
+      })
+      .into_response(),
+    )
+  })
+}
+
 pub(super) async fn children(
   Extension(index): Extension<Arc<Index>>,
   Path(inscription_id): Path<InscriptionId>,

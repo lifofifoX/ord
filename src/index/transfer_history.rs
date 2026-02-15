@@ -101,6 +101,57 @@ impl Index {
       .collect()
   }
 
+  pub fn get_transfer_history_in_block_paginated(
+    &self,
+    block_height: u32,
+    page_size: usize,
+    page_index: usize,
+  ) -> Result<(Vec<InscriptionTransferHistoryEntry>, bool)> {
+    if !self.has_address_index() {
+      return Ok((Vec::new(), false));
+    }
+
+    let rtx = self.database.begin_read()?;
+
+    let height_to_last_transfer_number = rtx.open_table(HEIGHT_TO_LAST_TRANSFER_NUMBER)?;
+    let sequence_number_to_inscription_entry =
+      rtx.open_table(SEQUENCE_NUMBER_TO_INSCRIPTION_ENTRY)?;
+    let transfer_number_to_event = rtx.open_table(TRANSFER_NUMBER_TO_EVENT)?;
+
+    let Some(newest_transfer_number) = height_to_last_transfer_number
+      .get(&block_height)?
+      .map(|guard| guard.value())
+    else {
+      return Ok((Vec::new(), false));
+    };
+
+    let oldest_transfer_number = height_to_last_transfer_number
+      .get(block_height.saturating_sub(1))?
+      .map(|guard| guard.value())
+      .unwrap_or(0);
+
+    let mut entries = (oldest_transfer_number..newest_transfer_number)
+      .rev()
+      .skip(page_index.saturating_mul(page_size))
+      .take(page_size.saturating_add(1))
+      .map(|transfer_number| {
+        self.load_transfer_history_entry(
+          &transfer_number_to_event,
+          &sequence_number_to_inscription_entry,
+          transfer_number,
+        )
+      })
+      .collect::<Result<Vec<InscriptionTransferHistoryEntry>>>()?;
+
+    let more = entries.len() > page_size;
+
+    if more {
+      entries.pop();
+    }
+
+    Ok((entries, more))
+  }
+
   pub fn get_address_transfer_history_paginated(
     &self,
     address: &Address,
