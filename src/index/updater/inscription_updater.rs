@@ -68,7 +68,6 @@ pub(super) struct InscriptionUpdater<'a, 'tx> {
   pub(super) home_inscription_count: u64,
   pub(super) home_inscriptions: &'a mut Table<'tx, u32, InscriptionIdValue>,
   pub(super) id_to_sequence_number: &'a mut Table<'tx, InscriptionIdValue, u32>,
-  pub(super) index_metaprotocol: Option<&'a str>,
   pub(super) sequence_number_to_transfer_number: &'a mut MultimapTable<'tx, u32, u64>,
   pub(super) inscription_number_to_sequence_number: &'a mut Table<'tx, i32, u32>,
   pub(super) latest_child_to_collection: &'a mut MultimapTable<'tx, u32, u32>,
@@ -112,7 +111,7 @@ impl InscriptionUpdater<'_, '_> {
       .map(|txout| txout.value.to_sat())
       .sum::<u64>();
 
-    let envelopes = ParsedEnvelope::from_transaction_with_filter(tx, self.index_metaprotocol);
+    let envelopes = ParsedEnvelope::from_transaction(tx);
     let has_new_inscriptions = !envelopes.is_empty();
     let mut envelopes = envelopes.into_iter().peekable();
 

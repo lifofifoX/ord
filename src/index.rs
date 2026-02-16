@@ -117,7 +117,6 @@ pub(crate) enum Statistic {
   UnboundInscriptions = 16,
   LastSavepointHeight = 17,
   IndexExcludeBrc20 = 18,
-  IndexMetaprotocol = 19,
 }
 
 impl Statistic {
@@ -406,12 +405,6 @@ impl Index {
             u64::from(EXCLUDE_BRC20),
           )?;
 
-          Self::set_statistic(
-            &mut statistics,
-            Statistic::IndexMetaprotocol,
-            Self::index_metaprotocol_statistic(settings.index_metaprotocol()),
-          )?;
-
           Self::set_statistic(&mut statistics, Statistic::Schema, SCHEMA_VERSION)?;
         }
 
@@ -472,7 +465,6 @@ impl Index {
     let index_transactions;
     let index_inscriptions;
     let index_exclude_brc20;
-    let index_metaprotocol;
 
     {
       let tx = database.begin_read()?;
@@ -483,22 +475,11 @@ impl Index {
       index_sats = Self::is_statistic_set(&statistics, Statistic::IndexSats)?;
       index_transactions = Self::is_statistic_set(&statistics, Statistic::IndexTransactions)?;
       index_exclude_brc20 = Self::is_statistic_set(&statistics, Statistic::IndexExcludeBrc20)?;
-      index_metaprotocol = statistics
-        .get(&Statistic::IndexMetaprotocol.key())?
-        .map(|value| value.value())
-        .unwrap_or_default();
     }
 
     if index_exclude_brc20 != EXCLUDE_BRC20 {
       bail!(
         "index at `{}` has incompatible BRC-20 exclusion mode, rebuild the index with this fork or use a separate index path",
-        path.display()
-      );
-    }
-
-    if index_metaprotocol != Self::index_metaprotocol_statistic(settings.index_metaprotocol()) {
-      bail!(
-        "index at `{}` has incompatible `--index-metaprotocol` setting, rebuild the index with this setting or use a separate index path",
         path.display()
       );
     }
@@ -869,18 +850,6 @@ impl Index {
       + n;
     statistic_to_count.insert(&statistic.key(), &value)?;
     Ok(())
-  }
-
-  fn index_metaprotocol_statistic(index_metaprotocol: Option<&str>) -> u64 {
-    match index_metaprotocol {
-      Some(index_metaprotocol) => {
-        let hash = bitcoin::hashes::sha256::Hash::hash(index_metaprotocol.as_bytes());
-        let mut value = [0; 8];
-        value.copy_from_slice(&hash[..8]);
-        u64::from_be_bytes(value) | (1 << 63)
-      }
-      None => 0,
-    }
   }
 
   pub(crate) fn set_statistic(
