@@ -545,6 +545,7 @@ impl Updater<'_> {
       home_inscription_count,
       home_inscriptions: &mut home_inscriptions,
       id_to_sequence_number: inscription_id_to_sequence_number,
+      index_metaprotocol: self.index.settings.index_metaprotocol(),
       sequence_number_to_transfer_number: &mut sequence_number_to_transfer_number,
       inscription_number_to_sequence_number: &mut inscription_number_to_sequence_number,
       latest_child_to_collection: &mut latest_child_to_collection,

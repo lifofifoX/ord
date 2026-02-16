@@ -95,9 +95,23 @@ impl From<RawEnvelope> for ParsedEnvelope {
 
 impl ParsedEnvelope {
   pub fn from_transaction(transaction: &Transaction) -> Vec<Self> {
+    Self::from_transaction_with_filter(transaction, None)
+  }
+
+  pub(crate) fn from_transaction_with_filter(
+    transaction: &Transaction,
+    filter: Option<&str>,
+  ) -> Vec<Self> {
     RawEnvelope::from_transaction(transaction)
       .into_iter()
       .map(|envelope| envelope.into())
+      .filter(|envelope: &ParsedEnvelope| match filter {
+        Some(filter) => match &envelope.payload.metaprotocol {
+          Some(metaprotocol) => metaprotocol.as_slice() == filter.as_bytes(),
+          None => false,
+        },
+        None => true,
+      })
       .collect()
   }
 }
@@ -264,20 +278,55 @@ mod tests {
   use super::*;
 
   fn parse(witnesses: &[Witness]) -> Vec<ParsedEnvelope> {
-    ParsedEnvelope::from_transaction(&Transaction {
-      version: Version(2),
-      lock_time: LockTime::ZERO,
-      input: witnesses
-        .iter()
-        .map(|witness| TxIn {
-          previous_output: OutPoint::null(),
-          script_sig: ScriptBuf::new(),
-          sequence: Sequence::ENABLE_RBF_NO_LOCKTIME,
-          witness: witness.clone(),
-        })
-        .collect(),
-      output: Vec::new(),
-    })
+    parse_with_filter(witnesses, None)
+  }
+
+  fn parse_with_filter(witnesses: &[Witness], filter: Option<&str>) -> Vec<ParsedEnvelope> {
+    ParsedEnvelope::from_transaction_with_filter(
+      &Transaction {
+        version: Version(2),
+        lock_time: LockTime::ZERO,
+        input: witnesses
+          .iter()
+          .map(|witness| TxIn {
+            previous_output: OutPoint::null(),
+            script_sig: ScriptBuf::new(),
+            sequence: Sequence::ENABLE_RBF_NO_LOCKTIME,
+            witness: witness.clone(),
+          })
+          .collect(),
+        output: Vec::new(),
+      },
+      filter,
+    )
+  }
+
+  #[test]
+  fn filter_by_metaprotocol() {
+    let envelope_with_metaprotocol = envelope(&[&PROTOCOL_ID, &Tag::Metaprotocol.bytes(), b"foo"]);
+    let envelope_without_metaprotocol = envelope(&[&PROTOCOL_ID]);
+
+    assert_eq!(
+      parse_with_filter(
+        &[
+          envelope_with_metaprotocol.clone(),
+          envelope_without_metaprotocol
+        ],
+        Some("foo")
+      ),
+      vec![ParsedEnvelope {
+        payload: Inscription {
+          metaprotocol: Some(b"foo".to_vec()),
+          ..default()
+        },
+        ..default()
+      }]
+    );
+
+    assert_eq!(
+      parse_with_filter(&[envelope_with_metaprotocol], Some("bar")),
+      Vec::new(),
+    );
   }
 
   #[test]

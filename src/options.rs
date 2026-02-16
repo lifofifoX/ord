@@ -56,6 +56,11 @@ pub struct Options {
     help = "Set index cache size to <INDEX_CACHE_SIZE> bytes. [default: 1/4 available RAM]"
   )]
   pub(crate) index_cache_size: Option<usize>,
+  #[arg(
+    long,
+    help = "Only index inscriptions with metaprotocol set as <INDEX_METAPROTOCOL>."
+  )]
+  pub(crate) index_metaprotocol: Option<String>,
   #[arg(long, help = "Track location of runes.")]
   pub(crate) index_runes: bool,
   #[arg(long, help = "Track location of all satoshis.")]
