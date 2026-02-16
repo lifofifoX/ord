@@ -1,0 +1,29 @@
+[Unit]
+Description=Electrs server
+After=network.target
+StartLimitBurst=120
+StartLimitIntervalSec=10m
+
+[Service]
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+Environment=RUST_BACKTRACE=1
+Environment=RUST_LOG=debug
+ExecStart=/usr/local/bin/electrs --daemon-dir /var/lib/bitcoind --utxos-limit 9000 --cors '*' --http-addr 0.0.0.0:8081 -vvvv
+LimitNOFILE=65535
+MemoryDenyWriteExecute=true
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectSystem=full
+Restart=on-failure
+RestartSec=5s
+StateDirectory=electrs
+StateDirectoryMode=0700
+TimeoutStopSec=10m
+Type=simple
+User=bitcoin
+Group=bitcoin
+WorkingDirectory=/home/bitcoin/electrs
+
+[Install]
+WantedBy=multi-user.target

@@ -226,6 +226,248 @@ fn address_page_shows_aggregated_inscriptions() {
 }
 
 #[test]
+fn address_children_returns_children_owned_by_address() {
+  let core = mockcore::spawn();
+  let ord = TestServer::spawn_with_args(&core, &["--index-addresses"]);
+
+  create_wallet(&core, &ord);
+  core.mine_blocks(1);
+
+  let parent_output = CommandBuilder::new("wallet inscribe --fee-rate 1.0 --file parent.png")
+    .write("parent.png", [1; 520])
+    .core(&core)
+    .ord(&ord)
+    .run_and_deserialize_output::<Batch>();
+  let parent_id = parent_output.inscriptions[0].id;
+  core.mine_blocks(1);
+
+  let child_output = CommandBuilder::new(format!(
+    "wallet inscribe --fee-rate 1.0 --parent {parent_id} --file child.png"
+  ))
+  .write("child.png", [1; 520])
+  .core(&core)
+  .ord(&ord)
+  .run_and_deserialize_output::<Batch>();
+  let child_id = child_output.inscriptions[0].id;
+  core.mine_blocks(1);
+
+  let address = "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4";
+  CommandBuilder::new(format!("wallet send --fee-rate 1 {address} {child_id}"))
+    .core(&core)
+    .ord(&ord)
+    .run_and_deserialize_output::<Output>();
+  core.mine_blocks(1);
+
+  let response = ord.json_request(format!("/address/{address}/children/{parent_id}"));
+  let status = response.status();
+  let body = response.text().unwrap();
+
+  assert_eq!(status, StatusCode::OK, "{body}");
+
+  let children = serde_json::from_str::<Vec<api::Inscription>>(&body).unwrap();
+  assert_eq!(children.len(), 1);
+  assert_eq!(children[0].id, child_id);
+}
+
+#[test]
+fn address_children_requires_address_index() {
+  let core = mockcore::spawn();
+  let ord = TestServer::spawn(&core);
+
+  let response = ord
+    .json_request("/address/bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4/children/0000000000000000000000000000000000000000000000000000000000000000i0");
+
+  let status = response.status();
+  let body = response.text().unwrap();
+
+  assert_eq!(status, StatusCode::NOT_FOUND);
+  assert_eq!(body, "this server has no address index");
+}
+
+#[test]
+fn address_children_returns_not_found_for_unknown_parent() {
+  let core = mockcore::spawn();
+  let ord = TestServer::spawn_with_args(&core, &["--index-addresses"]);
+
+  let response = ord
+    .json_request("/address/bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4/children/0000000000000000000000000000000000000000000000000000000000000000i0");
+
+  let status = response.status();
+  let body = response.text().unwrap();
+
+  assert_eq!(status, StatusCode::NOT_FOUND);
+  assert_eq!(
+    body,
+    "inscription 0000000000000000000000000000000000000000000000000000000000000000i0 not found"
+  );
+}
+
+#[test]
+fn pushtx_returns_not_found_without_json_accept_header() {
+  let core = mockcore::spawn();
+  let ord = TestServer::spawn(&core);
+
+  core.mine_blocks(1);
+  let txid = core.broadcast_tx(TransactionTemplate::default());
+  let tx = core
+    .mempool()
+    .into_iter()
+    .find(|tx| tx.compute_txid() == txid)
+    .unwrap();
+  let rawtx = hex::encode(bitcoin::consensus::serialize(&tx));
+
+  let client = reqwest::blocking::Client::new();
+  let response = client
+    .post(ord.url().join("/pushtx").unwrap())
+    .json(&serde_json::json!([rawtx]))
+    .send()
+    .unwrap();
+
+  assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[test]
+fn pushtx_accepts_object_payload_and_returns_success() {
+  let core = mockcore::spawn();
+  let ord = TestServer::spawn(&core);
+
+  core.mine_blocks(1);
+  let txid = core.broadcast_tx(TransactionTemplate::default());
+  let tx = core
+    .mempool()
+    .into_iter()
+    .find(|tx| tx.compute_txid() == txid)
+    .unwrap();
+  let rawtx = hex::encode(bitcoin::consensus::serialize(&tx));
+
+  let client = reqwest::blocking::Client::new();
+  let response = client
+    .post(ord.url().join("/pushtx").unwrap())
+    .header(reqwest::header::ACCEPT, "application/json")
+    .json(&serde_json::json!({
+      "txs": [rawtx],
+      "maxburn": 10000u64,
+      "maxrate": 10000.0,
+    }))
+    .send()
+    .unwrap();
+
+  let status = response.status();
+  let body = response.text().unwrap();
+
+  assert_eq!(status, StatusCode::OK, "{body}");
+
+  let result = serde_json::from_str::<Vec<serde_json::Value>>(&body).unwrap();
+  assert_eq!(result.len(), 1);
+  assert_eq!(result[0]["success"], serde_json::Value::Bool(true));
+  assert_eq!(
+    result[0]["txid"],
+    serde_json::Value::String(txid.to_string())
+  );
+}
+
+#[test]
+fn pushtx_rejects_malformed_payload() {
+  let core = mockcore::spawn();
+  let ord = TestServer::spawn(&core);
+
+  let client = reqwest::blocking::Client::new();
+  let response = client
+    .post(ord.url().join("/pushtx").unwrap())
+    .header(reqwest::header::ACCEPT, "application/json")
+    .json(&serde_json::json!({
+      "maxburn": 10000u64,
+    }))
+    .send()
+    .unwrap();
+
+  let status = response.status();
+  let body = response.text().unwrap();
+
+  assert_eq!(status, StatusCode::BAD_REQUEST);
+  assert_eq!(body, "expected object to contain `txs`");
+}
+
+#[test]
+fn pushtx_returns_bad_request_when_any_submission_fails() {
+  let core = mockcore::spawn();
+  let ord = TestServer::spawn(&core);
+
+  core.mine_blocks(1);
+  let txid = core.broadcast_tx(TransactionTemplate::default());
+  let tx = core
+    .mempool()
+    .into_iter()
+    .find(|tx| tx.compute_txid() == txid)
+    .unwrap();
+  let rawtx = hex::encode(bitcoin::consensus::serialize(&tx));
+
+  let client = reqwest::blocking::Client::new();
+  let response = client
+    .post(ord.url().join("/pushtx").unwrap())
+    .header(reqwest::header::ACCEPT, "application/json")
+    .json(&serde_json::json!([rawtx, 123]))
+    .send()
+    .unwrap();
+
+  let status = response.status();
+  let body = response.text().unwrap();
+
+  assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+
+  let result = serde_json::from_str::<Vec<serde_json::Value>>(&body).unwrap();
+  assert_eq!(result.len(), 2);
+  assert_eq!(result[0]["success"], serde_json::Value::Bool(true));
+  assert_eq!(result[1]["success"], serde_json::Value::Bool(false));
+  assert_eq!(
+    result[1]["error"],
+    serde_json::Value::String("expected rawtx to be string".to_string())
+  );
+}
+
+#[test]
+fn tx_mempool_endpoint_returns_entry_for_known_tx() {
+  let core = mockcore::spawn();
+  let ord = TestServer::spawn(&core);
+
+  core.mine_blocks(1);
+  let txid = core.broadcast_tx(TransactionTemplate::default());
+
+  let client = reqwest::blocking::Client::new();
+  let response = client
+    .get(ord.url().join(&format!("/tx/mempool/{txid}")).unwrap())
+    .header(reqwest::header::ACCEPT, "application/json")
+    .send()
+    .unwrap();
+
+  let status = response.status();
+  let body = response.text().unwrap();
+
+  assert_eq!(status, StatusCode::OK, "{body}");
+
+  let entry = serde_json::from_str::<serde_json::Value>(&body).unwrap();
+  assert_eq!(entry["txid"], serde_json::Value::String(txid.to_string()));
+}
+
+#[test]
+fn tx_mempool_endpoint_returns_not_found_for_unknown_tx() {
+  let core = mockcore::spawn();
+  let ord = TestServer::spawn(&core);
+
+  let txid =
+    Txid::from_str("0000000000000000000000000000000000000000000000000000000000000000").unwrap();
+
+  let client = reqwest::blocking::Client::new();
+  let response = client
+    .get(ord.url().join(&format!("/tx/mempool/{txid}")).unwrap())
+    .header(reqwest::header::ACCEPT, "application/json")
+    .send()
+    .unwrap();
+
+  assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[test]
 fn inscription_page() {
   let core = mockcore::spawn();
   let ord = TestServer::spawn(&core);

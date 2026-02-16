@@ -109,6 +109,7 @@ pub struct Inscription {
   pub height: u32,
   pub id: InscriptionId,
   pub metaprotocol: Option<String>,
+  pub delegate: Option<InscriptionId>,
   pub next: Option<InscriptionId>,
   pub number: i32,
   pub parents: Vec<InscriptionId>,

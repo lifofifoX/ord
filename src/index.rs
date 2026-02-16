@@ -2393,6 +2393,7 @@ impl Index {
         timestamp: timestamp(entry.timestamp.into()).timestamp(),
         value: output.as_ref().map(|o| o.value.to_sat()),
         metaprotocol: inscription.metaprotocol().map(|s| s.to_string()),
+        delegate: inscription.delegate(),
       },
       output,
       inscription,
