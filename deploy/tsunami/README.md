@@ -13,19 +13,17 @@ They are intentionally isolated from the default `deploy/` scripts so they can b
 
 - `__ORD_DOMAIN__`: public hostname for your ord HTTP endpoint.
 - `__ELECTRS_DOMAIN__`: public hostname for your electrs HTTP endpoint.
-- `__ASSIGN_DOMAIN__`: public hostname for your assign-style API endpoint (if used).
 - `__CHAIN__`: chain value passed to `ord` and `bitcoind` (`main`, `regtest`, `signet`, `test`, `testnet4`).
 - `__CSP_ORIGIN__`: CSP origin for ord server, usually same as `__ORD_DOMAIN__`.
 - `__ORD_PROXY_DOMAIN__`: upstream proxy domain for regtest `ord env --proxy` flows.
 
 ## Files
 
-- `assign.service`: systemd unit template for an assign-style ord binary.
 - `bitcoin.conf`: high-throughput + tor-aware bitcoind template.
 - `bitcoind-regtest.service`: regtest helper unit template.
 - `checkout`: checkout + setup bootstrap helper.
 - `electrs.service`: systemd unit template for electrs.
-- `nginx.conf.example`: reverse-proxy template for ord/electrs/assign.
+- `nginx.conf.example`: reverse-proxy template for ord/electrs.
 - `ord.service`: ord server systemd unit template (HTTP on 8080).
 - `setup`: idempotent setup script with optional deferred ord boot.
 - `torrc`: minimal tor control-port template.
