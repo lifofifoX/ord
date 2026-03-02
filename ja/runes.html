@@ -1,0 +1,342 @@
+<!DOCTYPE HTML>
+<html lang="ja" class="coal sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>ルーン - Ordinal Theory Handbook</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon.svg">
+        <link rel="shortcut icon" href="favicon.png">
+        <link rel="stylesheet" href="css/variables.css">
+        <link rel="stylesheet" href="css/general.css">
+        <link rel="stylesheet" href="css/chrome.css">
+        <link rel="stylesheet" href="css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="highlight.css">
+        <link rel="stylesheet" href="tomorrow-night.css">
+        <link rel="stylesheet" href="ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="index.css">
+
+
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "coal" : "coal";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc.js"></script>
+    </head>
+    <body>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('coal')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Ordinal Theory Handbook</h1>
+                    <div class="right-buttons">
+                        <button id="language-toggle" class="icon-button" type="button"
+                                title="Change language" aria-label="Change language"
+                                aria-haspopup="true" aria-expanded="false"
+                                aria-controls="language-list">
+                            <i class="fa fa-globe"></i>
+                        </button>
+                        <ul id="language-list" class="theme-popup" aria-label="Languages" role="menu">
+                          <li role="none"><button role="menuitem" class="theme">
+                              <a id="en">English</a>
+                          </button></li>
+                          <li role="none"><button role="menuitem" class="theme">
+                              <a id="de">Deutsch</a>
+                          </button></li>
+                          <li role="none"><button role="menuitem" class="theme">
+                              <a id="fr">Français</a>
+                          </button></li>
+                          <li role="none"><button role="menuitem" class="theme">
+                              <a id="es">Español</a>
+                          </button></li>
+                          <li role="none"><button role="menuitem" class="theme">
+                              <a id="pt">Português</a>
+                          </button></li>
+                           <li role="none"><button role="menuitem" class="theme">
+                              <a id="ru">Русский</a>
+                          </button></li>
+                          <li role="none"><button role="menuitem" class="theme">
+                              <a id="zh">中文版</a>
+                          </button></li>
+                          <li role="none"><button role="menuitem" class="theme">
+                              <a id="ja">日本語版</a>
+                          </button></li>
+                          <li role="none"><button role="menuitem" class="theme">
+                              <a id="ko">한국어</a>
+                          </button></li>
+                          <li role="none"><button role="menuitem" class="theme">
+                              <a id="fil">Filipino</a>
+                          </button></li>
+                          <li role="none"><button role="menuitem" class="theme">
+                              <a id="ar">العربية</a>
+                          </button></li>
+                          <li role="none"><button role="menuitem" class="theme">
+                              <a id="hi">हिंदी</a>
+                          </button></li>
+                          <li role="none"><button role="menuitem" class="theme">
+                              <a id="it">Italiano</a>
+                          </button></li>
+                          <li role="none"><button role="menuitem" class="theme">
+                              <a id="nl">Nederlands</a>
+                          </button></li>
+                        </ul>
+
+                        <script>
+                          let langToggle = document.getElementById("language-toggle");
+                          let langList = document.getElementById("language-list");
+                          langToggle.addEventListener("click", (event) => {
+                              langList.style.display = langList.style.display == "block" ? "none" : "block";
+                          });
+                          let selectedLang = document.getElementById("ja");
+                          if (selectedLang) {
+                              selectedLang.parentNode.classList.add("theme-selected");
+                          }
+                          // The path to the root, taking the current
+                          // language into account.
+                          let full_path_to_root = "../";
+                          // The page path (mdbook only gives us
+                          // access to the path to the Markdown file).
+                          let path = "runes.md".replace(/\.md$/, ".html");
+                          for (let lang of langList.querySelectorAll("a")) {
+                              if (lang.id == "en") {
+                                  lang.href = `${full_path_to_root}${path}`;
+                              } else {
+                                  lang.href = `${full_path_to_root}${lang.id}/${path}`;
+                              }
+                          }
+                        </script>
+
+
+
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/ordinals/ord" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="ルーン"><a class="header" href="#ルーン">ルーン</a></h1>
+<p>ルーンはビットコイントランザクションでビットコインネイティブのデジタルコモディティをエッチング、ミント、転送することを可能にします。</p>
+<p>すべての碑文がユニークであるのに対し、ルーンの各単位は同じです。これらは交換可能なトークンであり、様々な目的に適しています。</p>
+<h2 id="ルーンストーン"><a class="header" href="#ルーンストーン">ルーンストーン</a></h2>
+<p>ルーンストーンと呼ばれるルーンプロトコルメッセージは、ビットコイントランザクションアウトプットに格納されます。</p>
+<p>ルーンストーンアウトプットのスクリプト pubkey は <code>OP_RETURN</code> で始まり、続いて <code>OP_13</code>、その後ゼロ個以上のデータプッシュが続きます。これらのデータプッシュは連結され、128ビット整数のシーケンスにデコードされ、最終的にルーンストーンに解析されます。</p>
+<p>トランザクションには最大1つのルーンストーンが含まれる可能性があります。</p>
+<p>ルーンストーンは新しいルーンをエッチング、既存のルーンをミント、またはトランザクションのインプットからアウトプットへルーンを転送することができます。</p>
+<p>トランザクションアウトプットには任意の数のルーンの残高を保持することができます。</p>
+<p>ルーンはIDによって識別されます。IDはルーンがエッチングされたブロックと、そのブロック内でのエッチングトランザクションのインデックスから構成され、テキストでは <code>BLOCK:TX</code> として表現されます。たとえば、500番目のブロックの20番目のトランザクションでエッチングされたルーンのIDは <code>500:20</code> です。</p>
+<h2 id="エッチング"><a class="header" href="#エッチング">エッチング</a></h2>
+<p>ルーンはエッチングされることで存在します。エッチングはルーンを作成し、そのプロパティを設定します。一度設定されたこれらのプロパティは、エッチングした者であっても不変です。</p>
+<h3 id="name"><a class="header" href="#name">Name</a></h3>
+<p>名前はAからZの文字から構成され、1文字から26文字の長さです。たとえば、<code>UNCOMMONGOODS</code> はルーン名です。</p>
+<p>名前には可読性を高めるために、ブリットで表現されるスペーサーを含めることができます。<code>UNCOMMONGOODS</code> は <code>UNCOMMON•GOODS</code> としてエッチングされる場合があります。</p>
+<p>名前の一意性はスペーサーに依存しません。したがって、別のスペーサーを持つ場合であっても、既存のルーンと同じ文字の配列でルーンをエッチングすることはできません。</p>
+<p>スペーサーは2つの文字の間にのみ配置できます。また、スペーサーは文字数にカウントされません。</p>
+<h3 id="分割可能性"><a class="header" href="#分割可能性">分割可能性</a></h3>
+<p>ルーンの分割可能性とは、そのルーンが原子単位にどれだけ細かく分割できるかを示します。分割可能性は、ルーン量における小数点以下の許可される桁数として表されます。分割可能性が0のルーンは分割できません。分割可能性が1のルーンの単位は10のサブユニットに分割でき、分割可能性が2のルーンは100に分割でき、以下同様に続きます。</p>
+<h3 id="シンボル"><a class="header" href="#シンボル">シンボル</a></h3>
+<p>ルーンの通貨シンボルは単一のUnicodeコードポイントです。例えば<code>$</code>、<code>⧉</code>、または<code>🧿</code>などで、そのルーンの数量の後に表示されます。</p>
+<p>分割可能性が2でシンボルが<code>🧿</code>のルーンの101原子単位は<code>1.01 🧿</code>として表示されます。</p>
+<p>ルーンにシンボルがない場合は、スカラベとも呼ばれる汎用通貨記号<code>¤</code>を使用する必要があります。</p>
+<h3 id="プリマイン"><a class="header" href="#プリマイン">プリマイン</a></h3>
+<p>ルーンのエッチャー（作成者）は、オプションでエッチされるルーンの単位を自分自身に割り当てることができます。この割り当てはプリマインと呼ばれます。</p>
+<h3 id="条件"><a class="header" href="#条件">条件</a></h3>
+<p>ルーンはオープンミントを持つことができ、誰でもそのルーンの単位を自分のために作成し割り当てることができます。オープンミントは、エッチング時に設定される条件に従います。</p>
+<p>ミントは、ミントのすべての条件が満たされている間はオープンし、いずれかが満たされなくなるとクローズします。例えば、ミントは開始ブロック高、終了ブロック高、上限に制限される場合があり、開始ブロック高から終了ブロック高の間、または上限に達するまで、どちらか早い方まで開いています。</p>
+<h4 id="上限"><a class="header" href="#上限">上限</a></h4>
+<p>ルーンがミントできる回数がその上限です。上限に達すると、ミントは閉じられます。</p>
+<h4 id="金額"><a class="header" href="#金額">金額</a></h4>
+<p>各ミントトランザクションは、ルーンの固定量の新しい単位を作成します。</p>
+<h4 id="開始ブロック高"><a class="header" href="#開始ブロック高">開始ブロック高</a></h4>
+<p>指定された開始ブロック高のブロックからミントが開始されます。</p>
+<h4 id="終了ブロック高"><a class="header" href="#終了ブロック高">終了ブロック高</a></h4>
+<p>指定された終了ブロック高のブロック以降では、ルーンをミントすることはできません。</p>
+<h4 id="開始オフセット"><a class="header" href="#開始オフセット">開始オフセット</a></h4>
+<p>ミントは、開始オフセット＋ルーンがエッチされたブロックの高さに等しい高さのブロックから開始されます。</p>
+<h4 id="終了オフセット"><a class="header" href="#終了オフセット">終了オフセット</a></h4>
+<p>ルーンは、終了オフセット＋ルーンがエッチされたブロックの高さに等しい高さのブロック以降ではミントすることはできません。</p>
+<h2 id="ミンティング"><a class="header" href="#ミンティング">ミンティング</a></h2>
+<p>ルーンのミントがオープンしている間、誰でもミントの条件に従って、そのルーンの固定量の新しい単位を作成するミントトランザクションを作成することができます。</p>
+<h2 id="転送"><a class="header" href="#転送">転送</a></h2>
+<p>トランザクションの入力にルーンが含まれるか、プリマインやミントによって新しいルーンが作成される場合、それらのルーンはそのトランザクションの出力に転送されます。トランザクションのルーンストーンは、入力ルーンが出力に転送される方法を変更することがあります。</p>
+<h3 id="命令"><a class="header" href="#命令">命令</a></h3>
+<p>ルーンストーンには任意の数の命令を含めることができます。命令はルーンID、金額、出力番号で構成されます。命令は順番に処理され、未割り当てのルーンを出力に割り当てます。</p>
+<h3 id="ポインタ"><a class="header" href="#ポインタ">ポインタ</a></h3>
+<p>すべての命令が処理された後、残った未割り当てのルーンは、トランザクションの最初の非<code>OP_RETURN</code>出力に転送されます。ルーンストーンには、オプションで代替のデフォルト出力を指定するポインターを含めることができます。</p>
+<h3 id="バーン"><a class="header" href="#バーン">バーン</a></h3>
+<p>ルーンは、命令やポインターで<code>OP_RETURN</code>出力に転送することでバーン（無効化）することができます。</p>
+<h2 id="空墓セノタフ"><a class="header" href="#空墓セノタフ">空墓（セノタフ）</a></h2>
+<p>ルーンストーンは、ルーンストーン<code>OP_RETURN</code>内の非プッシュデータオプコード、無効なvarint、または認識されないルーンストーンフィールドなど、いくつかの理由で形式が不正になることがあります。</p>
+<p>形式不正のルーンストーンは<a href="https://en.wikipedia.org/wiki/Cenotaph">空墓（cenotaphs）</a>と呼ばれます。</p>
+<p>空墓を持つトランザクションに入力されるルーンはバーンされます。空墓を持つトランザクションでエッチされるルーンはミント不可に設定されます。空墓を持つトランザクションのミントはミント上限にカウントされますが、ミントされたルーンはバーンされます。</p>
+<p>空墓はアップグレードメカニズムであり、ルーンストーンにルーンの作成と転送方法を変更する新しいセマンティクスを与えることを可能にします。アップグレードしていないクライアントがそれらのルーンをバーンされたものとして見るため、アップグレードしていないクライアントを惑わせることはありません。</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="inscriptions/examples.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="runes/specification.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="inscriptions/examples.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="runes/specification.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr.min.js"></script>
+        <script src="mark.min.js"></script>
+        <script src="searcher.js"></script>
+
+        <script src="clipboard.min.js"></script>
+        <script src="highlight.js"></script>
+        <script src="book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+    </div>
+    </body>
+</html>

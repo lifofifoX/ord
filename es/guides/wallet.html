@@ -1,0 +1,490 @@
+<!DOCTYPE HTML>
+<html lang="es" class="coal sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Monedero - Ordinal Theory Handbook</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon.svg">
+        <link rel="shortcut icon" href="../favicon.png">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+        <link rel="stylesheet" href="../css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="../highlight.css">
+        <link rel="stylesheet" href="../tomorrow-night.css">
+        <link rel="stylesheet" href="../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="../index.css">
+
+
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "../";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "coal" : "coal";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc.js"></script>
+    </head>
+    <body>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('coal')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Ordinal Theory Handbook</h1>
+                    <div class="right-buttons">
+                        <button id="language-toggle" class="icon-button" type="button"
+                                title="Change language" aria-label="Change language"
+                                aria-haspopup="true" aria-expanded="false"
+                                aria-controls="language-list">
+                            <i class="fa fa-globe"></i>
+                        </button>
+                        <ul id="language-list" class="theme-popup" aria-label="Languages" role="menu">
+                          <li role="none"><button role="menuitem" class="theme">
+                              <a id="en">English</a>
+                          </button></li>
+                          <li role="none"><button role="menuitem" class="theme">
+                              <a id="de">Deutsch</a>
+                          </button></li>
+                          <li role="none"><button role="menuitem" class="theme">
+                              <a id="fr">Français</a>
+                          </button></li>
+                          <li role="none"><button role="menuitem" class="theme">
+                              <a id="es">Español</a>
+                          </button></li>
+                          <li role="none"><button role="menuitem" class="theme">
+                              <a id="pt">Português</a>
+                          </button></li>
+                           <li role="none"><button role="menuitem" class="theme">
+                              <a id="ru">Русский</a>
+                          </button></li>
+                          <li role="none"><button role="menuitem" class="theme">
+                              <a id="zh">中文版</a>
+                          </button></li>
+                          <li role="none"><button role="menuitem" class="theme">
+                              <a id="ja">日本語版</a>
+                          </button></li>
+                          <li role="none"><button role="menuitem" class="theme">
+                              <a id="ko">한국어</a>
+                          </button></li>
+                          <li role="none"><button role="menuitem" class="theme">
+                              <a id="fil">Filipino</a>
+                          </button></li>
+                          <li role="none"><button role="menuitem" class="theme">
+                              <a id="ar">العربية</a>
+                          </button></li>
+                          <li role="none"><button role="menuitem" class="theme">
+                              <a id="hi">हिंदी</a>
+                          </button></li>
+                          <li role="none"><button role="menuitem" class="theme">
+                              <a id="it">Italiano</a>
+                          </button></li>
+                          <li role="none"><button role="menuitem" class="theme">
+                              <a id="nl">Nederlands</a>
+                          </button></li>
+                        </ul>
+
+                        <script>
+                          let langToggle = document.getElementById("language-toggle");
+                          let langList = document.getElementById("language-list");
+                          langToggle.addEventListener("click", (event) => {
+                              langList.style.display = langList.style.display == "block" ? "none" : "block";
+                          });
+                          let selectedLang = document.getElementById("es");
+                          if (selectedLang) {
+                              selectedLang.parentNode.classList.add("theme-selected");
+                          }
+                          // The path to the root, taking the current
+                          // language into account.
+                          let full_path_to_root = "../../";
+                          // The page path (mdbook only gives us
+                          // access to the path to the Markdown file).
+                          let path = "guides/wallet.md".replace(/\.md$/, ".html");
+                          for (let lang of langList.querySelectorAll("a")) {
+                              if (lang.id == "en") {
+                                  lang.href = `${full_path_to_root}${path}`;
+                              } else {
+                                  lang.href = `${full_path_to_root}${lang.id}/${path}`;
+                              }
+                          }
+                        </script>
+
+
+
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/ordinals/ord" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="monedero"><a class="header" href="#monedero">Monedero</a></h1>
+<p>Cada sat puede ser inscrito con contenido arbitrario, permitiendo la creación de artefactos digitales únicos nativos en Bitcoin. Estos artefactos digitales pueden almacenarse en monederos de Bitcoin y transferirse mediante transacciones de Bitcoin. Las inscripciones son tan duraderas, inmutables, seguras y descentralizadas como el propio Bitcoin.</p>
+<p>Trabajar con inscripciones requiere de un nodo de Bitcoin para darte una visión del estado actual de la blockchain de Bitcoin, además de un monedero capaz de crear inscripciones y realizar control de sats a la hora de construir transacciones para enviar inscripciones a otro monedero.</p>
+<p>Bitcoin Core proporciona un nodo completo de Bitcoin y un monedero. Sin embargo, el monedero de Bitcoin Core no puede crear inscripciones y no realiza control de sats.</p>
+<p>Para esto se requiere de <a href="https://github.com/ordinals/ord"><code>ord</code></a>, la utilidad de ordinals. <code>ord</code> no implementa su propio monedero, por lo que los subcomandos del monedero ord interactúan con los monederos de Bitcoin Core.</p>
+<p>Esta guía cubre:</p>
+<ol>
+<li>La instalación de Bitcoin Core</li>
+<li>Sincronización de la blockchain de Bitcoin Core</li>
+<li>Creación de un monedero de Bitcoin Core</li>
+<li>Utilizando <code>ord wallet receive</code> para recibir sats</li>
+<li>Creación de inscripciones usando <code>ord wallet inscribe</code></li>
+<li>Enviar inscripciones usando <code>ord wallet send</code></li>
+<li>Recibir inscripciones con <code>ord wallet receive</code></li>
+<li>Inscripción por lotes con <code>ord wallet inscribe --batch</code></li>
+</ol>
+<h2 id="obtener-ayuda"><a class="header" href="#obtener-ayuda">Obtener Ayuda</a></h2>
+<p>Si te atascas, intenta pedir ayuda en el Servidor de <a href="https://discord.com/invite/87cjuz4FYg">Discord de Ordinals</a>, o consulta el GitHub para ver <a href="https://github.com/ordinals/ord/issues">problemas</a> y <a href="https://github.com/ordinals/ord/discussions">discusiones relevantes</a>.</p>
+<h2 id="la-instalación-de-bitcoin-core"><a class="header" href="#la-instalación-de-bitcoin-core">La instalación de Bitcoin Core</a></h2>
+<p>Bitcoin Core está disponible en la <a href="https://bitcoincore.org/en/download/">página de descargas</a> de <a href="https://bitcoincore.org/">bitcoincore.org</a>.</p>
+<p>Making inscriptions requires Bitcoin Core 28 or newer.</p>
+<p>Esta guía no cubre en detalle la instalación de Bitcoin Core. Una vez que hayas instalado Bitcoin Core, deberías poder ejecutar <code>bitcoind -version</code> exitosamente desde la línea de comandos. <em>NO</em> utilices <code>bitcoin-qt</code>.</p>
+<h2 id="configuración-de-bitcoin-core"><a class="header" href="#configuración-de-bitcoin-core">Configuración de Bitcoin Core</a></h2>
+<p><code>ord</code> requiere el índice de transacciones y la interfaz REST de Bitcoin Core.</p>
+<p>Debes configurar tu nodo de Bitcoin Core para que mantenga un índice de transacciones. Añade lo siguiente a tu archivo <code>bitcoin.conf</code>:</p>
+<pre><code>txindex=1
+</code></pre>
+<p>O ejecuta <code>bitcoind</code> con <code>-txindex</code>:</p>
+<pre><code>bitcoind -txindex
+</code></pre>
+<p>Los detalles sobre cómo crear o modificar tu archivo <code>bitcoin.conf</code> se pueden encontrar <a href="https://github.com/bitcoin/bitcoin/blob/master/doc/bitcoin-conf.md">aquí</a>.</p>
+<h2 id="sincronizando-la-blockchain-de-bitcoin"><a class="header" href="#sincronizando-la-blockchain-de-bitcoin">Sincronizando la Blockchain de Bitcoin</a></h2>
+<p>Para sincronizar la blockchain o cadena de bloques de bitcoin, ejecuta:</p>
+<pre><code>bitcoind -txindex
+</code></pre>
+<p>…y déjalo ejecutar hasta que <code>getblockcount</code>:</p>
+<pre><code>bitcoin-cli getblockcount
+</code></pre>
+<p>coincida con el recuento de bloques en un explorador de bloques como el <a href="https://mempool.space/">explorador de bloques mempool.space</a>. <code>ord</code> interactúa con <code>bitcoind</code>, así que debes dejar <code>bitcoind</code> ejecutándose en segundo plano mientras estés usando <code>ord</code>.</p>
+<p>La cadena de bloques ocupa aproximadamente 600GB de espacio en disco. Si tienes un disco externo en el que deseas almacenar los bloques, utiliza la opción de configuración <code>blocksdir=&lt;ruta_del_disco_externo&gt;</code>. Esto es mucho más sencillo que usar <code>datadir</code>, ya que el archivo de cookies permanecerá en la ubicación predeterminada, facilitando su acceso para <code>bitcoin-cli</code> y <code>ord</code>.</p>
+<h2 id="solución-de-problemas"><a class="header" href="#solución-de-problemas">Solución de problemas</a></h2>
+<p>Asegúrate de poder acceder a <code>bitcoind</code> utilizando <code>bitcoin-cli -getinfo</code> y que esté completamente sincronizado.</p>
+<p>Si <code>bitcoin-cli -getinfo</code> devuelve <code>"Could not connect to the server"</code>, <code>bitcoind</code> no se está ejecutando.</p>
+<p>Verifica que <code>rpcuser</code>, <code>rpcpassword</code> o <code>rpcauth</code> <em>NO</em> estén configurados en tu archivo <code>bitcoin.conf</code>. <code>ord</code> requiere el uso de autenticación con cookies. Asegúrate de que exista un archivo <code>.cookie</code> en tu directorio de datos de Bitcoin.</p>
+<p>Si <code>bitcoin-cli -getinfo</code> muestra <code>"Could not locate RPC credentials"</code>, necesitas especificar la ubicación del archivo de cookies. Si utilizas un directorio de datos personalizado (especificando la opción <code>datadir</code>), entonces debes indicar la ubicación del archivo de cookies de la siguiente manera: <code>bitcoin-cli -rpccookiefile=&lt;tu_directorio_de_datos_de_bitcoin&gt;/.cookie -getinfo</code>. Al ejecutar <code>ord</code>, debes especificar la ubicación del archivo de cookies con <code>--cookie-file=&lt;tu_directorio_de_datos_de_bitcoin&gt;/.cookie</code>.</p>
+<p>Asegúrate de no tener <code>disablewallet=1</code> en tu archivo <code>bitcoin.conf</code>. Si <code>bitcoin-cli listwallets</code> devuelve <code>"Method not found"</code>, entonces la billetera está deshabilitada y no podrás usar <code>ord</code>.</p>
+<p>Asegúrate de que <code>txindex=1</code> esté configurado. Ejecuta <code>bitcoin-cli getindexinfo</code> y debería devolver algo similar a esto</p>
+<pre><code class="language-json">{
+  "txindex": {
+    "sincronizado": true,
+    "mejor_altura_de_bloque": 776546
+  }
+}
+</code></pre>
+<p>Si solo sale <code>{}</code>, significa que <code>txindex</code> no está configurado. Si sale <code>"synced": false</code>, bitcoind todavía está creando el <code>txindex</code>. Espera hasta que <code>"synced": true</code> antes de usar <code>ord</code>.</p>
+<p>Si tienes configurado <code>maxuploadtarget</code>, esto puede interferir con la obtención de bloques para el índice de <code>ord</code>. Para solucionarlo, elimínalo o configura <code>whitebind=127.0.0.1:8333</code>.</p>
+<h2 id="instalación-de-ord"><a class="header" href="#instalación-de-ord">Instalación de <code>ord</code></a></h2>
+<p>La herramienta <code>ord</code> está desarrollada en Rust y puede compilarse desde el <a href="https://github.com/ordinals/ord">código fuente</a>. Los binarios preconstruidos están disponibles en la página de <a href="https://github.com/ordinals/ord/releases">lanzamientos</a>.</p>
+<p>Puedes instalar el último binario precompilado desde la línea de comandos usando:</p>
+<pre><code class="language-sh">curl --proto '=https' --tlsv1.2 -fsLS https://ordinals.com/install.sh | bash -s
+</code></pre>
+<p>Una vez que ord esté instalado, deberías poder de ejecutar:</p>
+<pre><code>ord --version
+</code></pre>
+<p>Esto mostrará el número de versión de <code>ord</code>.</p>
+<h2 id="creando-un-monedero"><a class="header" href="#creando-un-monedero">Creando un Monedero</a></h2>
+<p><code>ord</code> utiliza <code>bitcoind</code> para manejar claves privadas, firmar transacciones y transmitir transacciones a la red de Bitcoin. Además, el <code>monedero ord</code> requiere que <a href="explorer.html"><code>ord server</code></a> esté ejecutándose en segundo plano. Asegúrate de que estos programas estén en funcionamiento:</p>
+<pre><code>bitcoind -txindex
+</code></pre>
+<pre><code>ord server
+</code></pre>
+<p>Para crear un monedero llamado <code>ord</code>, que es el predeterminado, para utilizar con <code>ord wallet</code>, ejecuta:</p>
+<pre><code>ord wallet create
+</code></pre>
+<p>Esto mostrará tu frase semilla mnemotécnica. Guárdala en un lugar seguro.</p>
+<p>`` { "mnemonic": "dignity buddy actor toast talk crisp city annual tourist orient similar federal", "passphrase": "" }</p>
+<pre><code></code></pre>
+<p>Si deseas especificar un nombre diferente o utilizar un <code>servidor de ord</code> que se esté ejecutando en una URL no predeterminada, puedes configurar estas opciones:</p>
+<pre><code>ord wallet --name foo --server-url http://127.0.0.1:8080 create
+</code></pre>
+<p>Para ver todas las opciones disponibles del Monedero, puedes usar el siguiente comando:</p>
+<pre><code>ord wallet help
+</code></pre>
+<h2 id="restauración-y-dump-del-monedero"><a class="header" href="#restauración-y-dump-del-monedero">Restauración y Dump del Monedero</a></h2>
+<p>El monedero <code>ord</code> utiliza descriptores, lo que te permite exportar los descriptores de salida e importarlos en otro monedero que también use descriptores. Para exportar los descriptores del monedero, que incluyen tus claves privadas:</p>
+<pre><code>$ ord wallet dump
+============================================
+= ESTE STRING CONTIENE TUS LLAVES PRIVADAS =
+=        NO LAS COMPARTAS CON NADIE        =
+============================================
+{
+  "wallet_name": "ord",
+  "descriptors": [
+    {
+      "desc": "tr([551ac972/86'/1'/0']tprv8h4xBhrfZwX9o1XtUMmz92yNiGRYjF9B1vkvQ858aN1UQcACZNqN9nFzj3vrYPa4jdPMfw4ooMuNBfR4gcYm7LmhKZNTaF4etbN29Tj7UcH/0/*)#uxn94yt5",
+      "timestamp": 1296688602,
+      "active": true,
+      "internal": false,
+      "range": [
+        0,
+        999
+      ],
+      "next": 0
+    },
+    {
+      "desc": "tr([551ac972/86'/1'/0']tprv8h4xBhrfZwX9o1XtUMmz92yNiGRYjF9B1vkvQ858aN1UQcACZNqN9nFzj3vrYPa4jdPMfw4ooMuNBfR4gcYm7LmhKZNTaF4etbN29Tj7UcH/1/*)#djkyg3mv",
+      "timestamp": 1296688602,
+      "active": true,
+      "internal": true,
+      "range": [
+        0,
+        999
+      ],
+      "next": 0
+    }
+  ]
+}
+</code></pre>
+<p>Una billetera ord puede ser restaurada a partir de una frase mnemotécnica:</p>
+<pre><code>ord wallet restore --from mnemonic
+</code></pre>
+<p>Escribe tu frase mnemotécnica y presiona enter.</p>
+<p>Para restaurar desde un descriptor en <code>descriptor.json</code>:</p>
+<pre><code>cat descriptor.json | ord wallet restore --from descriptor
+</code></pre>
+<p>Para restaurar desde un descriptor en el portapapeles:</p>
+<pre><code>ord wallet restore --from descriptor
+</code></pre>
+<p>Pega el descriptor en la terminal y presiona CTRL-D en unix y CTRL-Z en Windows.</p>
+<h2 id="recibir-sats"><a class="header" href="#recibir-sats">Recibir Sats</a></h2>
+<p>Las inscripciones se crean en sats individuales, mediante transacciones estándar de Bitcoin que pagan comisiones en sats, por lo que tu monedero necesitará tener algunos sats disponibles.</p>
+<p>Obtén una nueva dirección de tu monedero <code>ord</code>ejecutando:</p>
+<pre><code>ord wallet receive
+</code></pre>
+<p>Y envíale algunos fondos.</p>
+<p>Puedes ver las transacciones pendientes con:</p>
+<pre><code>ord wallet transactions
+</code></pre>
+<p>Una vez que la transacción se confirme, podrás ver las salidas de la transacción con <code>ord wallet outputs</code>.</p>
+<h2 id="creación-de-contenido-para-las-inscripciones"><a class="header" href="#creación-de-contenido-para-las-inscripciones">Creación de Contenido para las Inscripciones</a></h2>
+<p>Los sats pueden ser inscritos con cualquier tipo de contenido, pero el monedero <code>ord</code> solo admite tipos de contenido que pueden ser mostrados por el explorador de bloques de <code>ord</code>.</p>
+<p>Además, las inscripciones se incluyen en las transacciones, debido a esto, en cuanto más grande sea el contenido, mayor será la comisión que debe pagar por la transacción de la inscripción.</p>
+<p>El contenido de inscripción se incluye en el testigo de la transacción, los cuales reciben el descuento de testigo. Para calcular un aproximado de la comisión que se trendrá que pagar por la transacción de una inscripción, divide el tamaño del contenido por cuatro y multiplica por la tasa de comisión.</p>
+<p>Las transacciones de inscripción deben tener un peso inferior a 400,000 unidades, de lo contrario, no serán retransmitidas por Bitcoin Core. Un byte del contenido de inscripción equivale a una unidad de peso. Considerando que una transacción de inscripción abarca más que solo el contenido de la inscripción se debe restringir el contenido de cada inscripción a menos de 400,000 unidades de peso. Para mantener un margen de seguridad, se recomienda no exceder las 390,000 unidades de peso.</p>
+<h2 id="creando-una-inscripción"><a class="header" href="#creando-una-inscripción">Creando una Inscripción</a></h2>
+<p>Para crear una inscripción con el contenido de <code>ARCHIVO</code>, ejecuta:</p>
+<pre><code>ord wallet inscribe --fee-rate FEE_RATE --file FILE
+</code></pre>
+<p>Ord mostrará dos IDs de transacciones, uno para la transacción de compromiso, uno para la transacción de revelación, y el ID de inscripción. Los IDs de inscripción tienen el formato <code>TXIDiN</code>, donde <code>TXID</code> es el ID de la transacción de revelación, y <code>N</code> es el índice de la inscripción en la transacción de revelación.</p>
+<p>La transacción de compromiso se compromete a un tapscript que aloja el contenido de la inscripción, mientras que la transacción de revelación consume ese tapscript, revelando el contenido en la cadena e inscribiéndolo en el primer sat del input que contiene el tapscript correspondiente.</p>
+<p>Espera a que la transacción de revelación sea minada. Puedes verificar el estado de las transacciones de compromiso y revelación usando el <a href="https://mempool.space/">explorador de bloques mempool.space</a>.</p>
+<p>Después de que la transacción de revelación sea minada, el ID de inscripción debería salir al ejecutar:</p>
+<pre><code>ord wallet inscriptions
+</code></pre>
+<h2 id="inscripciones-padre-hijo-parent-child"><a class="header" href="#inscripciones-padre-hijo-parent-child">Inscripciones Padre-Hijo (Parent-Child)</a></h2>
+<p>Las inscripciones de tipo padre-hijo permiten crear lo que coloquialmente se conoce como colecciones. Para más información, consulta <a href="../inscriptions/provenance.html">proveniencia</a>.</p>
+<p>Para designar una inscripción como hijo de otra inscripción, la inscripción padre debe estar inscrita y disponible en el monedero. Para seleccionar una inscripción padre, ejecuta <code>ord wallet inscriptions</code> y copia el ID de la inscripción (<code>&lt;ID_DE_INSCRIPCIÓN_PADRE&gt;</code>).</p>
+<p>Luego, inscribe la inscripción hijo y especifica el padre de esta manera:</p>
+<pre><code>ord wallet inscribe --fee-rate FEE_RATE --parent &lt;PARENT_INSCRIPTION_ID&gt; --file CHILD_FILE
+</code></pre>
+<p>Esta relación no puede añadirse retroactivamente, el padre debe estar presente en el momento de la creación del hijo.</p>
+<h2 id="envíar-inscripciones"><a class="header" href="#envíar-inscripciones">Envíar Inscripciones</a></h2>
+<p>Pide al destinatario que genere una dirección nueva ejecutando:</p>
+<pre><code>ord wallet receive
+</code></pre>
+<p>Envía la inscripción ejecutando:</p>
+<pre><code>ord wallet send --fee-rate &lt;FEE_RATE&gt; &lt;ADDRESS&gt; &lt;INSCRIPTION_ID&gt;
+</code></pre>
+<p>Consulta la transacción con:</p>
+<pre><code>ord wallet transactions
+</code></pre>
+<p>Una vez que la transacción de envío haya sido confirmada, el destinatario podrá verificarlo ejecutando:</p>
+<pre><code>ord wallet inscriptions
+</code></pre>
+<h2 id="envíar-runas"><a class="header" href="#envíar-runas">Envíar Runas</a></h2>
+<p>Pide al destinatario que genere una dirección nueva ejecutando:</p>
+<pre><code>ord wallet receive
+</code></pre>
+<p>Para envíar las runas ejecuta:</p>
+<pre><code>ord wallet send --fee-rate &lt;FEE_RATE&gt; &lt;ADDRESS&gt; &lt;RUNES_AMOUNT&gt;
+</code></pre>
+<p>En donde <code>RUNES_AMOUNT</code> es la cantidad de runas a enviar, seguida por dos puntos <code>:</code> y el nombre de la runa. Por ejemplo, si deseas enviar 1000 runas EXAMPLE, usarías <code>1000:EXAMPLE</code>.</p>
+<pre><code>ord wallet send --fee-rate 1 SOME_ADDRESS 1000:EXAMPLE
+</code></pre>
+<p>Consulta la transacción con:</p>
+<pre><code>ord wallet transactions
+</code></pre>
+<p>Una vez que la transacción de envío se confirme, el destinatario puede verificar la recepción con:</p>
+<pre><code>ord wallet balance
+</code></pre>
+<h2 id="recibir-inscripciones"><a class="header" href="#recibir-inscripciones">Recibir Inscripciones</a></h2>
+<p>Genera una nueva dirección de recepción usando:</p>
+<pre><code>ord wallet receive
+</code></pre>
+<p>El remitente puede transferir la inscripción a tu dirección usando:</p>
+<pre><code>ord wallet send --fee-rate &lt;FEE_RATE&gt; ADDRESS INSCRIPTION_ID
+</code></pre>
+<p>Consulta la transacción con:</p>
+<pre><code>ord wallet transactions
+</code></pre>
+<p>Una vez que la transacción se confirme, puedes verificar si lo recibiste ejecutando con:</p>
+<pre><code>ord wallet inscriptions
+</code></pre>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../guides/testing.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="../bounties.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../guides/testing.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="../bounties.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr.min.js"></script>
+        <script src="../mark.min.js"></script>
+        <script src="../searcher.js"></script>
+
+        <script src="../clipboard.min.js"></script>
+        <script src="../highlight.js"></script>
+        <script src="../book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+    </div>
+    </body>
+</html>
