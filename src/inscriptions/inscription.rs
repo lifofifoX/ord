@@ -253,13 +253,19 @@ impl Inscription {
       return false;
     };
 
+    const FILTERED_PROTOCOLS: [&str; 2] = ["brc-20", "brc20-prog"];
+
     serde_json::from_slice::<serde_json::Value>(body)
       .ok()
       .and_then(|json| {
         json
           .get("p")
           .and_then(serde_json::Value::as_str)
-          .map(|protocol| protocol.eq_ignore_ascii_case("brc-20"))
+          .map(|protocol| {
+            FILTERED_PROTOCOLS
+              .iter()
+              .any(|filtered_protocol| protocol.eq_ignore_ascii_case(filtered_protocol))
+          })
       })
       .unwrap_or(false)
   }

@@ -1,9 +1,17 @@
 use {super::*, crate::index::testing::Context};
 
 fn brc20_inscription() -> Inscription {
+  protocol_inscription("brc-20")
+}
+
+fn brc20_prog_inscription() -> Inscription {
+  protocol_inscription("brc20-prog")
+}
+
+fn protocol_inscription(protocol: &str) -> Inscription {
   Inscription {
     content_type: Some("application/json".as_bytes().to_vec()),
-    body: Some(br#"{"p":"brc-20","op":"mint","tick":"ordi"}"#.to_vec()),
+    body: Some(format!(r#"{{"p":"{protocol}","op":"mint","tick":"ordi"}}"#).into_bytes()),
     ..default()
   }
 }
@@ -74,6 +82,33 @@ fn filtered_brc20_inscriptions_are_not_indexed_and_numbering_has_gaps() {
     );
 
     assert_eq!(context.index.inscription_number(retained_inscription_id), 1);
+  }
+}
+
+#[test]
+fn filtered_brc20_prog_inscriptions_are_not_indexed() {
+  for context in Context::configurations() {
+    context.mine_blocks(1);
+
+    let filtered_txid = context.core.broadcast_tx(TransactionTemplate {
+      inputs: &[(1, 0, 0, brc20_prog_inscription().to_witness())],
+      ..default()
+    });
+
+    let filtered_inscription_id = InscriptionId {
+      txid: filtered_txid,
+      index: 0,
+    };
+
+    context.mine_blocks(1);
+
+    assert_eq!(
+      context
+        .index
+        .get_inscription_by_id(filtered_inscription_id)
+        .unwrap(),
+      None
+    );
   }
 }
 

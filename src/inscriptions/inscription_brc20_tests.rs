@@ -20,6 +20,12 @@ fn is_brc20() {
   };
   assert!(by_body_case_insensitive.is_brc20());
 
+  let by_body_brc20_prog = Inscription {
+    body: Some(br#"{"p":"BrC20-PrOg"}"#.to_vec()),
+    ..default()
+  };
+  assert!(by_body_brc20_prog.is_brc20());
+
   let by_text_plain_json_body = Inscription {
     content_type: Some("text/plain".as_bytes().to_vec()),
     body: Some(br#"{"p":"brc-20"}"#.to_vec()),
