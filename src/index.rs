@@ -64,7 +64,7 @@ mod brc20_filter_tests;
 #[path = "index/transfer_history_tests.rs"]
 mod transfer_history_tests;
 
-const SCHEMA_VERSION: u64 = 33;
+const SCHEMA_VERSION: u64 = 34;
 pub(crate) const EXCLUDE_BRC20: bool = true;
 
 define_multimap_table! { LATEST_CHILD_SEQUENCE_NUMBER_TO_COLLECTION_SEQUENCE_NUMBER, u32, u32 }
