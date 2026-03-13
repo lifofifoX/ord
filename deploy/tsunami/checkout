@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+
+set -euxo pipefail
+
+BRANCH=$1
+REMOTE=$2
+CHAIN=$3
+DOMAIN=$4
+SKIP_BOOT_ORD=${5:-true}
+
+apt-get update
+apt-get -y install git aria2 tmux
+
+if [[ ! -d $REMOTE ]]; then
+  mkdir -p "$REMOTE"
+  git clone "https://github.com/$REMOTE.git" "$REMOTE"
+fi
+
+cd "$REMOTE"
+
+git fetch origin
+git checkout -B "$BRANCH"
+git reset --hard "origin/$BRANCH"
+
+COMMIT=$(git rev-parse --short HEAD)
+
+./deploy/tsunami/setup "$CHAIN" "$DOMAIN" "$BRANCH" "$COMMIT" "$SKIP_BOOT_ORD"

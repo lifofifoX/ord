@@ -109,6 +109,7 @@ pub struct Inscription {
   pub height: u32,
   pub id: InscriptionId,
   pub metaprotocol: Option<String>,
+  pub delegate: Option<InscriptionId>,
   pub next: Option<InscriptionId>,
   pub number: i32,
   pub parents: Vec<InscriptionId>,
@@ -251,6 +252,40 @@ pub struct AddressInfo {
   pub inscriptions: Option<Vec<InscriptionId>>,
   pub sat_balance: u64,
   pub runes_balances: Option<Vec<(SpacedRune, Decimal, Option<char>)>>,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TransferHistory {
+  pub transfers: Vec<TransferHistoryEntry>,
+  pub more: bool,
+  pub page: usize,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TransferHistoryEntry {
+  pub block_height: u32,
+  pub inscription_id: InscriptionId,
+  pub sequence_number: u32,
+  pub from_address: Option<String>,
+  pub to_address: Option<String>,
+  pub old_satpoint: Option<SatPoint>,
+  pub new_satpoint: SatPoint,
+  pub spent_as_fee_in_txid: Option<Txid>,
+}
+
+impl From<crate::index::InscriptionTransferHistoryEntry> for TransferHistoryEntry {
+  fn from(entry: crate::index::InscriptionTransferHistoryEntry) -> Self {
+    Self {
+      block_height: entry.block_height,
+      inscription_id: entry.inscription_id,
+      sequence_number: entry.sequence_number,
+      from_address: entry.from_address,
+      to_address: entry.to_address,
+      old_satpoint: entry.old_satpoint,
+      new_satpoint: entry.new_satpoint,
+      spent_as_fee_in_txid: entry.spent_as_fee_in_txid,
+    }
+  }
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]

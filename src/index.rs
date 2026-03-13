@@ -7,6 +7,7 @@ use {
     event::Event,
     lot::Lot,
     reorg::Reorg,
+    transfer_event::{InscriptionTransferEvent, InscriptionTransferEventValue},
     updater::Updater,
     utxo_entry::{ParsedUtxoEntry, UtxoEntry, UtxoEntryBuf},
   },
@@ -39,7 +40,7 @@ use {
   },
 };
 
-pub use self::entry::RuneEntry;
+pub use self::{entry::RuneEntry, transfer_history::InscriptionTransferHistoryEntry};
 
 pub(crate) mod entry;
 pub mod event;
@@ -47,26 +48,41 @@ mod fetcher;
 mod lot;
 mod reorg;
 mod rtx;
+mod transfer_event;
+mod transfer_history;
 mod updater;
 mod utxo_entry;
 
 #[cfg(test)]
 pub(crate) mod testing;
 
+#[cfg(test)]
+#[path = "index/brc20_filter_tests.rs"]
+mod brc20_filter_tests;
+
+#[cfg(test)]
+#[path = "index/transfer_history_tests.rs"]
+mod transfer_history_tests;
+
 const SCHEMA_VERSION: u64 = 34;
+pub(crate) const EXCLUDE_BRC20: bool = true;
 
 define_multimap_table! { LATEST_CHILD_SEQUENCE_NUMBER_TO_COLLECTION_SEQUENCE_NUMBER, u32, u32 }
+define_multimap_table! { SEQUENCE_NUMBER_TO_TRANSFER_NUMBER, u32, u64 }
 define_multimap_table! { SAT_TO_SEQUENCE_NUMBER, u64, u32 }
+define_multimap_table! { SCRIPT_PUBKEY_TO_TRANSFER_NUMBER, &[u8], u64 }
 define_multimap_table! { SCRIPT_PUBKEY_TO_OUTPOINT, &[u8], OutPointValue }
 define_multimap_table! { SEQUENCE_NUMBER_TO_CHILDREN, u32, u32 }
 define_table! { COLLECTION_SEQUENCE_NUMBER_TO_LATEST_CHILD_SEQUENCE_NUMBER, u32, u32 }
 define_table! { GALLERY_SEQUENCE_NUMBERS, u32, () }
 define_table! { HEIGHT_TO_BLOCK_HEADER, u32, &HeaderValue }
 define_table! { HEIGHT_TO_LAST_SEQUENCE_NUMBER, u32, u32 }
+define_table! { HEIGHT_TO_LAST_TRANSFER_NUMBER, u32, u64 }
 define_table! { HOME_INSCRIPTIONS, u32, InscriptionIdValue }
 define_table! { INSCRIPTION_ID_TO_SEQUENCE_NUMBER, InscriptionIdValue, u32 }
 define_table! { INSCRIPTION_NUMBER_TO_SEQUENCE_NUMBER, i32, u32 }
 define_table! { NUMBER_TO_OFFER, u64, &[u8] }
+define_table! { OUTPOINT_TO_FILTERED_INSCRIPTION_DATA, &OutPointValue, &[u8] }
 define_table! { OUTPOINT_TO_RUNE_BALANCES, &OutPointValue, &[u8] }
 define_table! { OUTPOINT_TO_UTXO_ENTRY, &OutPointValue, &UtxoEntry }
 define_table! { RUNE_ID_TO_RUNE_ENTRY, RuneIdValue, RuneEntryValue }
@@ -76,6 +92,7 @@ define_table! { SEQUENCE_NUMBER_TO_INSCRIPTION_ENTRY, u32, InscriptionEntryValue
 define_table! { SEQUENCE_NUMBER_TO_RUNE_ID, u32, RuneIdValue }
 define_table! { SEQUENCE_NUMBER_TO_SATPOINT, u32, &SatPointValue }
 define_table! { STATISTIC_TO_COUNT, u64, u64 }
+define_table! { TRANSFER_NUMBER_TO_EVENT, u64, InscriptionTransferEventValue }
 define_table! { TRANSACTION_ID_TO_RUNE, &TxidValue, u128 }
 define_table! { TRANSACTION_ID_TO_TRANSACTION, &TxidValue, &[u8] }
 define_table! { WRITE_TRANSACTION_STARTING_BLOCK_COUNT_TO_TIMESTAMP, u32, u128 }
@@ -99,6 +116,7 @@ pub(crate) enum Statistic {
   SatRanges = 14,
   UnboundInscriptions = 16,
   LastSavepointHeight = 17,
+  IndexExcludeBrc20 = 18,
 }
 
 impl Statistic {
@@ -210,6 +228,7 @@ pub struct Index {
   index_inscriptions: bool,
   index_runes: bool,
   index_sats: bool,
+  exclude_brc20: bool,
   index_transactions: bool,
   path: PathBuf,
   settings: Settings,
@@ -299,6 +318,7 @@ impl Index {
         let tx = database.begin_write()?;
 
         tx.open_table(NUMBER_TO_OFFER)?;
+        tx.open_table(OUTPOINT_TO_FILTERED_INSCRIPTION_DATA)?;
 
         tx.commit()?;
 
@@ -319,17 +339,21 @@ impl Index {
         tx.set_quick_repair(true);
 
         tx.open_multimap_table(LATEST_CHILD_SEQUENCE_NUMBER_TO_COLLECTION_SEQUENCE_NUMBER)?;
+        tx.open_multimap_table(SEQUENCE_NUMBER_TO_TRANSFER_NUMBER)?;
         tx.open_multimap_table(SAT_TO_SEQUENCE_NUMBER)?;
+        tx.open_multimap_table(SCRIPT_PUBKEY_TO_TRANSFER_NUMBER)?;
         tx.open_multimap_table(SCRIPT_PUBKEY_TO_OUTPOINT)?;
         tx.open_multimap_table(SEQUENCE_NUMBER_TO_CHILDREN)?;
         tx.open_table(COLLECTION_SEQUENCE_NUMBER_TO_LATEST_CHILD_SEQUENCE_NUMBER)?;
         tx.open_table(GALLERY_SEQUENCE_NUMBERS)?;
         tx.open_table(HEIGHT_TO_BLOCK_HEADER)?;
         tx.open_table(HEIGHT_TO_LAST_SEQUENCE_NUMBER)?;
+        tx.open_table(HEIGHT_TO_LAST_TRANSFER_NUMBER)?;
         tx.open_table(HOME_INSCRIPTIONS)?;
         tx.open_table(INSCRIPTION_ID_TO_SEQUENCE_NUMBER)?;
         tx.open_table(INSCRIPTION_NUMBER_TO_SEQUENCE_NUMBER)?;
         tx.open_table(NUMBER_TO_OFFER)?;
+        tx.open_table(OUTPOINT_TO_FILTERED_INSCRIPTION_DATA)?;
         tx.open_table(OUTPOINT_TO_RUNE_BALANCES)?;
         tx.open_table(OUTPOINT_TO_UTXO_ENTRY)?;
         tx.open_table(RUNE_ID_TO_RUNE_ENTRY)?;
@@ -340,6 +364,7 @@ impl Index {
         tx.open_table(SEQUENCE_NUMBER_TO_SATPOINT)?;
         tx.open_table(TRANSACTION_ID_TO_RUNE)?;
         tx.open_table(WRITE_TRANSACTION_STARTING_BLOCK_COUNT_TO_TIMESTAMP)?;
+        tx.open_table(TRANSFER_NUMBER_TO_EVENT)?;
 
         {
           let mut statistics = tx.open_table(STATISTIC_TO_COUNT)?;
@@ -372,6 +397,12 @@ impl Index {
             &mut statistics,
             Statistic::IndexTransactions,
             u64::from(settings.index_transactions_raw()),
+          )?;
+
+          Self::set_statistic(
+            &mut statistics,
+            Statistic::IndexExcludeBrc20,
+            u64::from(EXCLUDE_BRC20),
           )?;
 
           Self::set_statistic(&mut statistics, Statistic::Schema, SCHEMA_VERSION)?;
@@ -433,6 +464,7 @@ impl Index {
     let index_sats;
     let index_transactions;
     let index_inscriptions;
+    let index_exclude_brc20;
 
     {
       let tx = database.begin_read()?;
@@ -442,6 +474,14 @@ impl Index {
       index_runes = Self::is_statistic_set(&statistics, Statistic::IndexRunes)?;
       index_sats = Self::is_statistic_set(&statistics, Statistic::IndexSats)?;
       index_transactions = Self::is_statistic_set(&statistics, Statistic::IndexTransactions)?;
+      index_exclude_brc20 = Self::is_statistic_set(&statistics, Statistic::IndexExcludeBrc20)?;
+    }
+
+    if index_exclude_brc20 != EXCLUDE_BRC20 {
+      bail!(
+        "index at `{}` has incompatible BRC-20 exclusion mode, rebuild the index with this fork or use a separate index path",
+        path.display()
+      );
     }
 
     let genesis_block_coinbase_transaction =
@@ -469,6 +509,7 @@ impl Index {
       index_addresses,
       index_runes,
       index_sats,
+      exclude_brc20: EXCLUDE_BRC20,
       index_transactions,
       index_inscriptions,
       settings: settings.clone(),
@@ -2370,6 +2411,7 @@ impl Index {
         timestamp: timestamp(entry.timestamp.into()).timestamp(),
         value: output.as_ref().map(|o| o.value.to_sat()),
         metaprotocol: inscription.metaprotocol().map(|s| s.to_string()),
+        delegate: inscription.delegate(),
       },
       output,
       inscription,

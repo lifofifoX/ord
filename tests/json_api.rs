@@ -186,9 +186,41 @@ fn get_inscription() {
       sat: Some(Sat(50 * COIN_VALUE)),
       satpoint: SatPoint::from_str(&format!("{}:{}:{}", reveal, 0, 0)).unwrap(),
       timestamp: 2,
-      metaprotocol: None
+      metaprotocol: None,
+      delegate: None,
     }
   )
+}
+
+#[test]
+fn get_inscription_includes_delegate() {
+  let core = mockcore::spawn();
+  let ord = TestServer::spawn_with_server_args(&core, &[], &[]);
+  create_wallet(&core, &ord);
+
+  core.mine_blocks(1);
+
+  let (delegate, _) = inscribe(&core, &ord);
+
+  let output = CommandBuilder::new(format!(
+    "wallet inscribe --fee-rate 1.0 --delegate {delegate} --file meow.wav"
+  ))
+  .write("meow.wav", [0; 2048])
+  .core(&core)
+  .ord(&ord)
+  .run_and_deserialize_output::<Batch>();
+
+  core.mine_blocks(1);
+
+  let response = ord.json_request(format!("/inscription/{}", output.inscriptions[0].id));
+  assert_eq!(response.status(), StatusCode::OK);
+
+  let mut inscription_json: api::Inscription =
+    serde_json::from_str(&response.text().unwrap()).unwrap();
+  assert_regex_match!(inscription_json.address.clone().unwrap(), r"bc1p.*");
+  inscription_json.address = None;
+
+  assert_eq!(inscription_json.delegate, Some(delegate));
 }
 
 #[test]
@@ -250,7 +282,8 @@ fn get_inscription_with_metaprotocol_and_properties() {
       sat: Some(Sat(50 * COIN_VALUE)),
       satpoint: SatPoint::from_str(&format!("{}:{}:{}", output.reveal, 0, 0)).unwrap(),
       timestamp: 2,
-      metaprotocol: Some("foo".to_string())
+      metaprotocol: Some("foo".to_string()),
+      delegate: None,
     }
   );
 }
