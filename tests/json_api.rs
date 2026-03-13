@@ -276,6 +276,7 @@ fn get_inscription_with_metaprotocol_and_properties() {
           title: Some("bar".into()),
           traits: Traits::default(),
         },
+        txids: Vec::new(),
       },
       rune: None,
       sat: Some(Sat(50 * COIN_VALUE)),
@@ -302,6 +303,7 @@ fn get_inscription_with_compressed_properties() {
       title: Some("foo".into()),
       traits: Traits::default(),
     },
+    txids: Vec::new(),
   };
 
   let cbor = minicbor::to_vec(&properties).unwrap();

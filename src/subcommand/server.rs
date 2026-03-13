@@ -163,7 +163,7 @@ impl Server {
     handle: Handle<SocketAddr>,
     http_port_tx: Option<std::sync::mpsc::Sender<u16>>,
   ) -> SubcommandResult {
-    Runtime::new()?.block_on(async {
+    settings.runtime()?.block_on(async {
       let index_clone = index.clone();
       let integration_test = settings.integration_test();
 
@@ -266,6 +266,7 @@ impl Server {
         )
         .route("/inscriptions/{page}", get(Self::inscriptions_paginated))
         .route("/install.sh", get(Self::install_script))
+        .route("/missing", post(Self::missing).layer(body_limit))
         .route("/offer", post(Self::offer))
         .route("/offers", get(Self::offers))
         .route("/ordinal/{sat}", get(Self::ordinal))
@@ -2020,6 +2021,20 @@ impl Server {
     })
   }
 
+  async fn missing(
+    Extension(index): Extension<Arc<Index>>,
+    AcceptJson(accept_json): AcceptJson,
+    Json(inscription_ids): Json<Vec<InscriptionId>>,
+  ) -> ServerResult {
+    task::block_in_place(|| {
+      Ok(if accept_json {
+        Json(index.missing_inscriptions(&inscription_ids)?).into_response()
+      } else {
+        StatusCode::NOT_FOUND.into_response()
+      })
+    })
+  }
+
   async fn collections(
     Extension(server_config): Extension<Arc<ServerConfig>>,
     Extension(index): Extension<Arc<Index>>,
@@ -2680,6 +2695,26 @@ mod tests {
 
       let response = client
         .get(self.join_url(path.as_ref()))
+        .header(header::ACCEPT, "application/json")
+        .send()
+        .unwrap();
+
+      assert_eq!(response.status(), StatusCode::OK);
+
+      response.json().unwrap()
+    }
+
+    #[track_caller]
+    fn post_json<T: DeserializeOwned>(&self, path: impl AsRef<str>, body: &impl Serialize) -> T {
+      if let Err(error) = self.index.update() {
+        log::error!("{error}");
+      }
+
+      let client = reqwest::blocking::Client::new();
+
+      let response = client
+        .post(self.join_url(path.as_ref()))
+        .json(body)
         .header(header::ACCEPT, "application/json")
         .send()
         .unwrap();
@@ -5273,7 +5308,7 @@ mod tests {
             }],
             ..default()
           }
-          .to_cbor(),
+          .to_inline_cbor(),
           ..default()
         }
         .to_witness(),
@@ -5835,12 +5870,14 @@ next
         .map(|&id| properties::Item {
           id: Some(id),
           attributes: Attributes::default(),
+          index: None,
         })
         .collect::<Vec<_>>();
 
       let properties = Properties {
         attributes: Attributes::default(),
         gallery: gallery_items,
+        txids: Vec::new(),
       };
 
       server.core.broadcast_tx(TransactionTemplate {
@@ -5851,7 +5888,7 @@ next
           Inscription {
             content_type: Some("image/png".into()),
             body: Some("gallery".into()),
-            properties: properties.to_cbor(),
+            properties: properties.to_inline_cbor(),
             ..default()
           }
           .to_witness(),
@@ -5929,12 +5966,14 @@ next
       .map(|&id| properties::Item {
         id: Some(id),
         attributes: Attributes::default(),
+        index: None,
       })
       .collect::<Vec<_>>();
 
     let properties = Properties {
       attributes: Attributes::default(),
       gallery: gallery_items,
+      txids: Vec::new(),
     };
 
     server.mine_blocks(1);
@@ -5948,7 +5987,7 @@ next
           Inscription {
             content_type: Some("text/plain".into()),
             body: Some("gallery".into()),
-            properties: properties.to_cbor(),
+            properties: properties.to_inline_cbor(),
             ..default()
           }
           .to_witness(),
@@ -6018,7 +6057,7 @@ next
               }],
               ..default()
             }
-            .to_cbor(),
+            .to_inline_cbor(),
             ..default()
           }
           .to_witness(),
@@ -6079,7 +6118,7 @@ next
                 }],
                 ..default()
               }
-              .to_cbor(),
+              .to_inline_cbor(),
               ..default()
             }
             .to_witness(),
@@ -6161,7 +6200,7 @@ next
             }],
             ..default()
           }
-          .to_cbor(),
+          .to_inline_cbor(),
           ..default()
         }
         .to_witness(),
@@ -6187,7 +6226,7 @@ next
               }],
               ..default()
             }
-            .to_cbor(),
+            .to_inline_cbor(),
             ..default()
           }
           .to_witness(),
@@ -6502,7 +6541,7 @@ next
             }],
             ..default()
           }
-          .to_cbor(),
+          .to_inline_cbor(),
           ..default()
         }
         .to_witness(),
@@ -6662,6 +6701,7 @@ next
     let properties = Properties {
       attributes: Attributes::default(),
       gallery: gallery_items,
+      txids: Vec::new(),
     };
 
     server.mine_blocks(1);
@@ -6674,7 +6714,7 @@ next
         Inscription {
           content_type: Some("text/plain".into()),
           body: Some("gallery".into()),
-          properties: properties.to_cbor(),
+          properties: properties.to_inline_cbor(),
           ..default()
         }
         .to_witness(),
@@ -9493,6 +9533,50 @@ next
     );
 
     server.post("offer", &psbt, StatusCode::PAYLOAD_TOO_LARGE);
+  }
+
+  #[test]
+  fn missing_returns_missing_inscription_ids() {
+    let server = TestServer::builder().chain(Chain::Regtest).build();
+
+    server.mine_blocks(1);
+
+    let txid = server.core.broadcast_tx(TransactionTemplate {
+      inputs: &[(1, 0, 0, inscription("text/plain", "foo").to_witness())],
+      ..default()
+    });
+
+    server.mine_blocks(1);
+
+    let existing = InscriptionId { txid, index: 0 };
+
+    let missing_id = "0000000000000000000000000000000000000000000000000000000000000000i0"
+      .parse::<InscriptionId>()
+      .unwrap();
+
+    let result = server.post_json::<Vec<InscriptionId>>("missing", &vec![existing, missing_id]);
+
+    assert_eq!(result, vec![missing_id]);
+  }
+
+  #[test]
+  fn missing_returns_empty_when_all_exist() {
+    let server = TestServer::builder().chain(Chain::Regtest).build();
+
+    server.mine_blocks(1);
+
+    let txid = server.core.broadcast_tx(TransactionTemplate {
+      inputs: &[(1, 0, 0, inscription("text/plain", "foo").to_witness())],
+      ..default()
+    });
+
+    server.mine_blocks(1);
+
+    let existing = InscriptionId { txid, index: 0 };
+
+    let result = server.post_json::<Vec<InscriptionId>>("missing", &vec![existing]);
+
+    assert!(result.is_empty());
   }
 
   #[test]
