@@ -76,6 +76,15 @@ nav {
 nav > :first-child {
   color: var(--light-fg);
   font-weight: bold;
+  text-decoration: none;
+}
+
+nav a.active {
+  color: #ffffff;
+}
+
+nav a.active img {
+  filter: brightness(0) invert(1);
 }
 
 form {
