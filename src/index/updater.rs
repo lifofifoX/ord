@@ -9,7 +9,9 @@ use {
 };
 
 mod inscription_updater;
+mod inscription_updater_filtered;
 mod rune_updater;
+mod transfer_history_indexer;
 
 pub(crate) struct BlockData {
   pub(crate) header: Header,
@@ -77,6 +79,7 @@ impl Updater<'_> {
 
     let mut uncommitted = 0;
     let mut utxo_cache = HashMap::new();
+    let mut filtered_inscription_data_cache = HashMap::new();
     while let Ok(block) = rx.recv() {
       self.index_block(
         &mut output_sender,
@@ -84,6 +87,7 @@ impl Updater<'_> {
         &mut wtx,
         block,
         &mut utxo_cache,
+        &mut filtered_inscription_data_cache,
       )?;
 
       if let Some(progress_bar) = &mut progress_bar {
@@ -104,8 +108,9 @@ impl Updater<'_> {
         || (!self.index.settings.integration_test()
           && Reorg::is_savepoint_required(self.index, self.height)?)
       {
-        self.commit(wtx, utxo_cache)?;
+        self.commit(wtx, utxo_cache, filtered_inscription_data_cache)?;
         utxo_cache = HashMap::new();
+        filtered_inscription_data_cache = HashMap::new();
         uncommitted = 0;
         wtx = self.index.begin_write()?;
         let height = wtx
@@ -143,7 +148,7 @@ impl Updater<'_> {
     }
 
     if uncommitted > 0 {
-      self.commit(wtx, utxo_cache)?;
+      self.commit(wtx, utxo_cache, filtered_inscription_data_cache)?;
     }
 
     if let Some(progress_bar) = &mut progress_bar {
@@ -316,6 +321,7 @@ impl Updater<'_> {
     wtx: &mut WriteTransaction,
     block: BlockData,
     utxo_cache: &mut HashMap<OutPoint, UtxoEntryBuf>,
+    filtered_inscription_data_cache: &mut HashMap<OutPoint, Vec<u8>>,
   ) -> Result<()> {
     Reorg::detect_reorg(&block, self.height, self.index)?;
 
@@ -341,6 +347,7 @@ impl Updater<'_> {
         txout_receiver,
         output_sender,
         utxo_cache,
+        filtered_inscription_data_cache,
         wtx,
         &mut inscription_id_to_sequence_number,
         &mut statistic_to_count,
@@ -407,6 +414,7 @@ impl Updater<'_> {
     txout_receiver: &mut broadcast::Receiver<TxOut>,
     output_sender: &mut mpsc::Sender<OutPoint>,
     utxo_cache: &mut HashMap<OutPoint, UtxoEntryBuf>,
+    filtered_inscription_data_cache: &mut HashMap<OutPoint, Vec<u8>>,
     wtx: &'wtx WriteTransaction,
     inscription_id_to_sequence_number: &mut Table<'wtx, (u128, u128, u32), u32>,
     statistic_to_count: &mut Table<'wtx, u64, u64>,
@@ -417,22 +425,34 @@ impl Updater<'_> {
       wtx.open_table(COLLECTION_SEQUENCE_NUMBER_TO_LATEST_CHILD_SEQUENCE_NUMBER)?;
     let mut gallery_sequence_numbers = wtx.open_table(GALLERY_SEQUENCE_NUMBERS)?;
     let mut height_to_last_sequence_number = wtx.open_table(HEIGHT_TO_LAST_SEQUENCE_NUMBER)?;
+    let mut height_to_last_transfer_number = wtx.open_table(HEIGHT_TO_LAST_TRANSFER_NUMBER)?;
     let mut home_inscriptions = wtx.open_table(HOME_INSCRIPTIONS)?;
+    let mut sequence_number_to_transfer_number =
+      wtx.open_multimap_table(SEQUENCE_NUMBER_TO_TRANSFER_NUMBER)?;
     let mut inscription_number_to_sequence_number =
       wtx.open_table(INSCRIPTION_NUMBER_TO_SEQUENCE_NUMBER)?;
     let mut latest_child_to_collection =
       wtx.open_multimap_table(LATEST_CHILD_SEQUENCE_NUMBER_TO_COLLECTION_SEQUENCE_NUMBER)?;
+    let mut outpoint_to_filtered_inscription_data =
+      wtx.open_table(OUTPOINT_TO_FILTERED_INSCRIPTION_DATA)?;
     let mut outpoint_to_utxo_entry = wtx.open_table(OUTPOINT_TO_UTXO_ENTRY)?;
     let mut sat_to_satpoint = wtx.open_table(SAT_TO_SATPOINT)?;
+    let mut script_pubkey_to_transfer_number =
+      wtx.open_multimap_table(SCRIPT_PUBKEY_TO_TRANSFER_NUMBER)?;
     let mut sat_to_sequence_number = wtx.open_multimap_table(SAT_TO_SEQUENCE_NUMBER)?;
     let mut script_pubkey_to_outpoint = wtx.open_multimap_table(SCRIPT_PUBKEY_TO_OUTPOINT)?;
     let mut sequence_number_to_children = wtx.open_multimap_table(SEQUENCE_NUMBER_TO_CHILDREN)?;
     let mut sequence_number_to_inscription_entry =
       wtx.open_table(SEQUENCE_NUMBER_TO_INSCRIPTION_ENTRY)?;
+    let mut transfer_number_to_event = wtx.open_table(TRANSFER_NUMBER_TO_EVENT)?;
     let mut transaction_id_to_transaction = wtx.open_table(TRANSACTION_ID_TO_TRANSACTION)?;
 
     let index_inscriptions = self.height >= self.index.settings.first_inscription_height()
       && self.index.index_inscriptions;
+
+    let track_filtered_inscription_data = index_inscriptions
+      && self.index.exclude_brc20
+      && self.height < self.index.settings.chain().jubilee_height();
 
     // If the receiver still has inputs something went wrong in the last
     // block and we shouldn't recover from this and commit the last block
@@ -504,6 +524,13 @@ impl Updater<'_> {
       .map(|(number, _id)| number.value() + 1)
       .unwrap_or(0);
 
+    let next_transfer_number = transfer_number_to_event
+      .iter()?
+      .next_back()
+      .transpose()?
+      .map(|(number, _event)| number.value() + 1)
+      .unwrap_or(0);
+
     let home_inscription_count = home_inscriptions.len()?;
 
     let mut inscription_updater = InscriptionUpdater {
@@ -516,18 +543,23 @@ impl Updater<'_> {
       home_inscription_count,
       home_inscriptions: &mut home_inscriptions,
       id_to_sequence_number: inscription_id_to_sequence_number,
+      sequence_number_to_transfer_number: &mut sequence_number_to_transfer_number,
       inscription_number_to_sequence_number: &mut inscription_number_to_sequence_number,
       latest_child_to_collection: &mut latest_child_to_collection,
       lost_sats,
       next_sequence_number,
+      next_transfer_number,
       reward: Height(self.height).subsidy(),
       sat_to_sequence_number: &mut sat_to_sequence_number,
+      script_pubkey_to_transfer_number: &mut script_pubkey_to_transfer_number,
       sequence_number_to_children: &mut sequence_number_to_children,
       sequence_number_to_entry: &mut sequence_number_to_inscription_entry,
       timestamp: block.header.time,
+      transfer_number_to_event: &mut transfer_number_to_event,
       transaction_buffer: Vec::new(),
       transaction_id_to_transaction: &mut transaction_id_to_transaction,
       unbound_inscriptions,
+      track_filtered_inscription_data,
     };
 
     let mut coinbase_inputs = Vec::new();
@@ -551,47 +583,62 @@ impl Updater<'_> {
     {
       log::trace!("Indexing transaction {tx_offset}…");
 
-      let input_utxo_entries = if tx_offset == 0 {
-        Vec::new()
+      let (input_utxo_entries, input_filtered_inscription_data) = if tx_offset == 0 {
+        (Vec::new(), Vec::new())
       } else {
-        tx.input
-          .iter()
-          .map(|input| {
-            let outpoint = input.previous_output.store();
+        let mut input_utxo_entries = Vec::with_capacity(tx.input.len());
+        let mut input_filtered_inscription_data = Vec::with_capacity(tx.input.len());
 
-            let entry = if let Some(entry) = utxo_cache.remove(&OutPoint::load(outpoint)) {
-              self.outputs_cached += 1;
-              entry
-            } else if let Some(entry) = outpoint_to_utxo_entry.remove(&outpoint)? {
-              if self.index.index_addresses {
-                let script_pubkey = entry.value().parse(self.index).script_pubkey();
-                if !script_pubkey_to_outpoint.remove(script_pubkey, outpoint)? {
-                  panic!("script pubkey entry ({script_pubkey:?}, {outpoint:?}) not found");
-                }
+        for input in &tx.input {
+          let outpoint = input.previous_output.store();
+
+          let entry = if let Some(entry) = utxo_cache.remove(&input.previous_output) {
+            self.outputs_cached += 1;
+            entry
+          } else if let Some(entry) = outpoint_to_utxo_entry.remove(&outpoint)? {
+            if self.index.index_addresses {
+              let script_pubkey = entry.value().parse(self.index).script_pubkey();
+              if !script_pubkey_to_outpoint.remove(script_pubkey, outpoint)? {
+                panic!("script pubkey entry ({script_pubkey:?}, {outpoint:?}) not found");
               }
+            }
 
-              entry.value().to_buf()
+            entry.value().to_buf()
+          } else {
+            assert!(!self.index.have_full_utxo_index());
+            let txout = txout_receiver.blocking_recv().map_err(|err| {
+              anyhow!(
+                "failed to get transaction for {}: {err}",
+                input.previous_output
+              )
+            })?;
+
+            let mut entry = UtxoEntryBuf::new();
+            entry.push_value(txout.value.to_sat(), self.index);
+            if self.index.index_addresses {
+              entry.push_script_pubkey(txout.script_pubkey.as_bytes(), self.index);
+            }
+
+            entry
+          };
+
+          let filtered_inscription_data = if track_filtered_inscription_data {
+            if let Some(data) = filtered_inscription_data_cache.remove(&input.previous_output) {
+              data
+            } else if let Some(data) = outpoint_to_filtered_inscription_data.remove(&outpoint)? {
+              data.value().to_vec()
             } else {
-              assert!(!self.index.have_full_utxo_index());
-              let txout = txout_receiver.blocking_recv().map_err(|err| {
-                anyhow!(
-                  "failed to get transaction for {}: {err}",
-                  input.previous_output
-                )
-              })?;
+              Vec::new()
+            }
+          } else {
+            Vec::new()
+          };
 
-              let mut entry = UtxoEntryBuf::new();
-              entry.push_value(txout.value.to_sat(), self.index);
-              if self.index.index_addresses {
-                entry.push_script_pubkey(txout.script_pubkey.as_bytes(), self.index);
-              }
+          input_utxo_entries.push(entry);
+          input_filtered_inscription_data.push(filtered_inscription_data);
+        }
 
-              entry
-            };
-
-            Ok(entry)
-          })
-          .collect::<Result<Vec<UtxoEntryBuf>>>()?
+        (input_utxo_entries, input_filtered_inscription_data)
       };
 
       let input_utxo_entries = input_utxo_entries
@@ -649,6 +696,12 @@ impl Updater<'_> {
           tx,
           *txid,
           &input_utxo_entries,
+          &input_filtered_inscription_data,
+          if track_filtered_inscription_data {
+            Some(&mut *filtered_inscription_data_cache)
+          } else {
+            None
+          },
           &mut output_utxo_entries,
           utxo_cache,
           self.index,
@@ -665,6 +718,8 @@ impl Updater<'_> {
     if index_inscriptions {
       height_to_last_sequence_number
         .insert(&self.height, inscription_updater.next_sequence_number)?;
+      height_to_last_transfer_number
+        .insert(&self.height, &inscription_updater.next_transfer_number)?;
     }
 
     if !lost_sat_ranges.is_empty() {
@@ -828,6 +883,7 @@ impl Updater<'_> {
     &mut self,
     wtx: WriteTransaction,
     utxo_cache: HashMap<OutPoint, UtxoEntryBuf>,
+    filtered_inscription_data_cache: HashMap<OutPoint, Vec<u8>>,
   ) -> Result {
     log::info!(
       "Committing at block height {}, {} outputs traversed, {} in map, {} cached",
@@ -838,6 +894,8 @@ impl Updater<'_> {
     );
 
     {
+      let mut outpoint_to_filtered_inscription_data =
+        wtx.open_table(OUTPOINT_TO_FILTERED_INSCRIPTION_DATA)?;
       let mut outpoint_to_utxo_entry = wtx.open_table(OUTPOINT_TO_UTXO_ENTRY)?;
       let mut script_pubkey_to_outpoint = wtx.open_multimap_table(SCRIPT_PUBKEY_TO_OUTPOINT)?;
       let mut sequence_number_to_satpoint = wtx.open_table(SEQUENCE_NUMBER_TO_SATPOINT)?;
@@ -863,6 +921,10 @@ impl Updater<'_> {
             sequence_number_to_satpoint.insert(sequence_number, &satpoint.store())?;
           }
         }
+      }
+
+      for (outpoint, data) in filtered_inscription_data_cache {
+        outpoint_to_filtered_inscription_data.insert(&outpoint.store(), data.as_slice())?;
       }
     }
 
