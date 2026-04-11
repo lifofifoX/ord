@@ -2402,6 +2402,7 @@ impl Index {
         id: entry.id,
         next,
         number: entry.inscription_number,
+        sequence_number: entry.sequence_number,
         parents,
         previous,
         properties: inscription.properties(),

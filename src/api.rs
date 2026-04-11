@@ -119,6 +119,7 @@ pub struct Inscription {
   pub delegate: Option<InscriptionId>,
   pub next: Option<InscriptionId>,
   pub number: i32,
+  pub sequence_number: u32,
   pub parents: Vec<InscriptionId>,
   pub previous: Option<InscriptionId>,
   pub properties: Properties,

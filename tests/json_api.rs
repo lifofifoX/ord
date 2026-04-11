@@ -178,6 +178,7 @@ fn get_inscription() {
       id: inscription_id,
       number: 0,
       next: None,
+      sequence_number: 0,
       value: Some(10000),
       parents: Vec::new(),
       previous: None,
@@ -267,6 +268,7 @@ fn get_inscription_with_metaprotocol_and_properties() {
       id: output.inscriptions[0].id,
       number: 0,
       next: None,
+      sequence_number: 0,
       value: Some(10000),
       parents: Vec::new(),
       previous: None,
@@ -394,6 +396,37 @@ fn get_inscriptions() {
   assert_eq!(inscriptions_json.ids.len(), 50);
   assert!(!inscriptions_json.more);
   assert_eq!(inscriptions_json.page_index, 1);
+}
+
+#[test]
+fn post_inscriptions_includes_sequence_number() {
+  let core = mockcore::spawn();
+
+  let ord = TestServer::spawn_with_server_args(&core, &["--index-sats"], &[]);
+
+  create_wallet(&core, &ord);
+
+  let first = inscribe(&core, &ord).0;
+  let second = inscribe(&core, &ord).0;
+
+  ord.sync_server();
+
+  let response = reqwest::blocking::Client::new()
+    .post(ord.url().join("/inscriptions").unwrap())
+    .header(reqwest::header::ACCEPT, "application/json")
+    .json(&vec![first, second])
+    .send()
+    .unwrap();
+
+  assert_eq!(response.status(), StatusCode::OK);
+
+  let inscriptions: Vec<api::Inscription> = response.json().unwrap();
+
+  assert_eq!(inscriptions.len(), 2);
+  assert_eq!(inscriptions[0].id, first);
+  assert_eq!(inscriptions[0].sequence_number, 0);
+  assert_eq!(inscriptions[1].id, second);
+  assert_eq!(inscriptions[1].sequence_number, 1);
 }
 
 #[test]
