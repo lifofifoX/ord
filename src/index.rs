@@ -922,6 +922,32 @@ impl Index {
     Ok(())
   }
 
+  pub(crate) fn cleanup_pre_jubilee_filtered_inscription_data(&self) -> Result<(u64, u64, bool)> {
+    let wtx = self.database.begin_write()?;
+
+    let rows_before = wtx
+      .open_table(OUTPOINT_TO_FILTERED_INSCRIPTION_DATA)?
+      .len()?;
+
+    let table_deleted = wtx.delete_table(OUTPOINT_TO_FILTERED_INSCRIPTION_DATA)?;
+
+    wtx.open_table(OUTPOINT_TO_FILTERED_INSCRIPTION_DATA)?;
+
+    wtx.commit()?;
+
+    // Commit twice since due to a bug redb will only reuse pages freed in the
+    // transaction before last.
+    self.begin_write()?.commit()?;
+
+    let rows_after = self
+      .database
+      .begin_read()?
+      .open_table(OUTPOINT_TO_FILTERED_INSCRIPTION_DATA)?
+      .len()?;
+
+    Ok((rows_before, rows_after, table_deleted))
+  }
+
   #[cfg(test)]
   pub(crate) fn inscription_number(&self, inscription_id: InscriptionId) -> i32 {
     self
