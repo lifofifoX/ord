@@ -12,10 +12,34 @@ use {
 
 pub(crate) const PROTOCOL_ID: [u8; 3] = *b"ord";
 pub(crate) const BODY_TAG: [u8; 0] = [];
+pub(crate) const BIP110_MAX_PUSH_SIZE: usize = 256;
 
 type Result<T> = std::result::Result<T, script::Error>;
 pub type RawEnvelope = Envelope<Vec<Vec<u8>>>;
 pub type ParsedEnvelope = Envelope<Inscription>;
+
+fn pushnum_value(opcode: opcodes::Opcode) -> Option<u8> {
+  match opcode {
+    opcodes::all::OP_PUSHNUM_NEG1 => Some(0x81),
+    opcodes::all::OP_PUSHNUM_1 => Some(1),
+    opcodes::all::OP_PUSHNUM_2 => Some(2),
+    opcodes::all::OP_PUSHNUM_3 => Some(3),
+    opcodes::all::OP_PUSHNUM_4 => Some(4),
+    opcodes::all::OP_PUSHNUM_5 => Some(5),
+    opcodes::all::OP_PUSHNUM_6 => Some(6),
+    opcodes::all::OP_PUSHNUM_7 => Some(7),
+    opcodes::all::OP_PUSHNUM_8 => Some(8),
+    opcodes::all::OP_PUSHNUM_9 => Some(9),
+    opcodes::all::OP_PUSHNUM_10 => Some(10),
+    opcodes::all::OP_PUSHNUM_11 => Some(11),
+    opcodes::all::OP_PUSHNUM_12 => Some(12),
+    opcodes::all::OP_PUSHNUM_13 => Some(13),
+    opcodes::all::OP_PUSHNUM_14 => Some(14),
+    opcodes::all::OP_PUSHNUM_15 => Some(15),
+    opcodes::all::OP_PUSHNUM_16 => Some(16),
+    _ => None,
+  }
+}
 
 #[derive(Default, PartialEq, Clone, Serialize, Deserialize, Debug, Eq)]
 pub struct Envelope<T> {
@@ -132,6 +156,11 @@ impl RawEnvelope {
         } else {
           stuttered = stutter;
         }
+      } else if instruction == PushBytes((&PROTOCOL_ID).into())
+        && let Some(envelope) =
+          Self::from_bip110_instructions(&mut instructions, input, envelopes.len())?
+      {
+        envelopes.push(envelope);
       }
     }
 
@@ -182,78 +211,73 @@ impl RawEnvelope {
             }),
           ));
         }
-        Some(Op(opcodes::all::OP_PUSHNUM_NEG1)) => {
+        Some(Op(op)) => {
+          let Some(value) = pushnum_value(op) else {
+            return Ok((false, None));
+          };
           pushnum = true;
-          payload.push(vec![0x81]);
-        }
-        Some(Op(opcodes::all::OP_PUSHNUM_1)) => {
-          pushnum = true;
-          payload.push(vec![1]);
-        }
-        Some(Op(opcodes::all::OP_PUSHNUM_2)) => {
-          pushnum = true;
-          payload.push(vec![2]);
-        }
-        Some(Op(opcodes::all::OP_PUSHNUM_3)) => {
-          pushnum = true;
-          payload.push(vec![3]);
-        }
-        Some(Op(opcodes::all::OP_PUSHNUM_4)) => {
-          pushnum = true;
-          payload.push(vec![4]);
-        }
-        Some(Op(opcodes::all::OP_PUSHNUM_5)) => {
-          pushnum = true;
-          payload.push(vec![5]);
-        }
-        Some(Op(opcodes::all::OP_PUSHNUM_6)) => {
-          pushnum = true;
-          payload.push(vec![6]);
-        }
-        Some(Op(opcodes::all::OP_PUSHNUM_7)) => {
-          pushnum = true;
-          payload.push(vec![7]);
-        }
-        Some(Op(opcodes::all::OP_PUSHNUM_8)) => {
-          pushnum = true;
-          payload.push(vec![8]);
-        }
-        Some(Op(opcodes::all::OP_PUSHNUM_9)) => {
-          pushnum = true;
-          payload.push(vec![9]);
-        }
-        Some(Op(opcodes::all::OP_PUSHNUM_10)) => {
-          pushnum = true;
-          payload.push(vec![10]);
-        }
-        Some(Op(opcodes::all::OP_PUSHNUM_11)) => {
-          pushnum = true;
-          payload.push(vec![11]);
-        }
-        Some(Op(opcodes::all::OP_PUSHNUM_12)) => {
-          pushnum = true;
-          payload.push(vec![12]);
-        }
-        Some(Op(opcodes::all::OP_PUSHNUM_13)) => {
-          pushnum = true;
-          payload.push(vec![13]);
-        }
-        Some(Op(opcodes::all::OP_PUSHNUM_14)) => {
-          pushnum = true;
-          payload.push(vec![14]);
-        }
-        Some(Op(opcodes::all::OP_PUSHNUM_15)) => {
-          pushnum = true;
-          payload.push(vec![15]);
-        }
-        Some(Op(opcodes::all::OP_PUSHNUM_16)) => {
-          pushnum = true;
-          payload.push(vec![16]);
+          payload.push(vec![value]);
         }
         Some(PushBytes(push)) => {
           payload.push(push.as_bytes().to_vec());
         }
-        Some(_) => return Ok((false, None)),
+      }
+    }
+  }
+
+  // BIP-110 forbids executing OP_IF and OP_NOTIF in tapscript and limits data
+  // pushes to 256 bytes, so a compatible envelope is the protocol push
+  // followed by data pushes balanced by OP_DROP and OP_2DROP. The envelope is
+  // complete when every element it pushed, including the protocol push, has
+  // been dropped.
+  fn from_bip110_instructions(
+    instructions: &mut Peekable<Instructions>,
+    input: usize,
+    offset: usize,
+  ) -> Result<Option<Self>> {
+    let mut payload = Vec::new();
+
+    let mut pushnum = false;
+
+    let mut depth: usize = 1;
+
+    loop {
+      match instructions.next().transpose()? {
+        None => return Ok(None),
+        Some(PushBytes(push)) => {
+          if push.len() > BIP110_MAX_PUSH_SIZE {
+            return Ok(None);
+          }
+          payload.push(push.as_bytes().to_vec());
+          depth += 1;
+        }
+        Some(Op(opcodes::all::OP_2DROP)) => {
+          if depth < 2 {
+            return Ok(None);
+          }
+          depth -= 2;
+        }
+        Some(Op(opcodes::all::OP_DROP)) => {
+          depth -= 1;
+        }
+        Some(Op(op)) => {
+          let Some(value) = pushnum_value(op) else {
+            return Ok(None);
+          };
+          pushnum = true;
+          payload.push(vec![value]);
+          depth += 1;
+        }
+      }
+
+      if depth == 0 {
+        return Ok(Some(Envelope {
+          input: input.try_into().unwrap(),
+          offset: offset.try_into().unwrap(),
+          payload,
+          pushnum,
+          stutter: false,
+        }));
       }
     }
   }
@@ -1046,6 +1070,304 @@ mod tests {
         stutter: false,
         ..default()
       }],
+    );
+  }
+
+  fn bip110_envelope(payload: &[&[u8]]) -> Witness {
+    let mut builder = script::Builder::new().push_slice(PROTOCOL_ID);
+
+    for data in payload {
+      let mut buf = script::PushBytesBuf::new();
+      buf.extend_from_slice(data).unwrap();
+      builder = builder.push_slice(buf);
+    }
+
+    let mut remaining = payload.len() + 1;
+
+    while remaining >= 2 {
+      builder = builder.push_opcode(opcodes::all::OP_2DROP);
+      remaining -= 2;
+    }
+
+    if remaining == 1 {
+      builder = builder.push_opcode(opcodes::all::OP_DROP);
+    }
+
+    Witness::from_slice(&[builder.into_script().into_bytes(), Vec::new()])
+  }
+
+  #[test]
+  fn bip110_envelope_with_content_type_and_body() {
+    assert_eq!(
+      parse(&[bip110_envelope(&[
+        &Tag::ContentType.bytes(),
+        b"text/plain;charset=utf-8",
+        &[],
+        b"ord",
+      ])]),
+      vec![ParsedEnvelope {
+        payload: inscription("text/plain;charset=utf-8", "ord"),
+        ..default()
+      }]
+    );
+  }
+
+  #[test]
+  fn bip110_empty_envelope() {
+    assert_eq!(
+      parse(&[bip110_envelope(&[])]),
+      vec![ParsedEnvelope { ..default() }]
+    );
+  }
+
+  #[test]
+  fn bip110_envelope_with_body_only() {
+    assert_eq!(
+      parse(&[bip110_envelope(&[&[], b"foo"])]),
+      vec![ParsedEnvelope {
+        payload: Inscription {
+          body: Some(b"foo".to_vec()),
+          ..default()
+        },
+        ..default()
+      }]
+    );
+  }
+
+  #[test]
+  fn bip110_envelope_with_no_body() {
+    assert_eq!(
+      parse(&[bip110_envelope(&[
+        &Tag::ContentType.bytes(),
+        b"text/plain;charset=utf-8"
+      ])]),
+      vec![ParsedEnvelope {
+        payload: Inscription {
+          content_type: Some(b"text/plain;charset=utf-8".to_vec()),
+          ..default()
+        },
+        ..default()
+      }]
+    );
+  }
+
+  #[test]
+  fn bip110_envelope_with_interleaved_drops() {
+    let script = script::Builder::new()
+      .push_slice(PROTOCOL_ID)
+      .push_slice([1])
+      .push_slice(b"text/plain;charset=utf-8")
+      .push_opcode(opcodes::all::OP_2DROP)
+      .push_slice([])
+      .push_slice(b"foo")
+      .push_opcode(opcodes::all::OP_2DROP)
+      .push_slice(b"bar")
+      .push_opcode(opcodes::all::OP_2DROP)
+      .into_script();
+
+    assert_eq!(
+      parse(&[Witness::from_slice(&[script.into_bytes(), Vec::new()])]),
+      vec![ParsedEnvelope {
+        payload: inscription("text/plain;charset=utf-8", "foobar"),
+        ..default()
+      }]
+    );
+  }
+
+  #[test]
+  fn bip110_envelope_with_op_3dup_is_invalid() {
+    let script = script::Builder::new()
+      .push_slice(PROTOCOL_ID)
+      .push_slice(b"foo")
+      .push_opcode(opcodes::all::OP_3DUP)
+      .push_opcode(opcodes::all::OP_2DROP)
+      .push_opcode(opcodes::all::OP_2DROP)
+      .into_script();
+
+    assert_eq!(
+      parse(&[Witness::from_slice(&[script.into_bytes(), Vec::new()])]),
+      Vec::new()
+    );
+  }
+
+  #[test]
+  fn bip110_push_of_256_bytes_is_valid() {
+    assert_eq!(
+      parse(&[bip110_envelope(&[&[], &[1; 256]])]),
+      vec![ParsedEnvelope {
+        payload: Inscription {
+          body: Some(vec![1; 256]),
+          ..default()
+        },
+        ..default()
+      }]
+    );
+  }
+
+  #[test]
+  fn bip110_push_over_256_bytes_is_invalid() {
+    assert_eq!(parse(&[bip110_envelope(&[&[], &[1; 257]])]), Vec::new());
+  }
+
+  #[test]
+  fn bip110_op_2drop_underflowing_envelope_stack_is_invalid() {
+    let script = script::Builder::new()
+      .push_slice(PROTOCOL_ID)
+      .push_opcode(opcodes::all::OP_2DROP)
+      .into_script();
+
+    assert_eq!(
+      parse(&[Witness::from_slice(&[script.into_bytes(), Vec::new()])]),
+      Vec::new()
+    );
+  }
+
+  #[test]
+  fn bip110_envelope_without_balancing_drops_is_invalid() {
+    let script = script::Builder::new()
+      .push_slice(PROTOCOL_ID)
+      .push_slice(b"foo")
+      .into_script();
+
+    assert_eq!(
+      parse(&[Witness::from_slice(&[script.into_bytes(), Vec::new()])]),
+      Vec::new()
+    );
+  }
+
+  #[test]
+  fn bip110_envelope_with_unexpected_opcode_is_invalid() {
+    let script = script::Builder::new()
+      .push_slice(PROTOCOL_ID)
+      .push_slice(b"foo")
+      .push_opcode(opcodes::all::OP_CHECKSIG)
+      .push_opcode(opcodes::all::OP_2DROP)
+      .into_script();
+
+    assert_eq!(
+      parse(&[Witness::from_slice(&[script.into_bytes(), Vec::new()])]),
+      Vec::new()
+    );
+  }
+
+  #[test]
+  fn bip110_envelope_with_surrounding_script() {
+    let script = script::Builder::new()
+      .push_slice([2; 32])
+      .push_opcode(opcodes::all::OP_CHECKSIG)
+      .push_slice(PROTOCOL_ID)
+      .push_slice([1])
+      .push_slice(b"text/plain;charset=utf-8")
+      .push_slice([])
+      .push_slice(b"ord")
+      .push_opcode(opcodes::all::OP_2DROP)
+      .push_opcode(opcodes::all::OP_2DROP)
+      .push_opcode(opcodes::all::OP_DROP)
+      .into_script();
+
+    assert_eq!(
+      parse(&[Witness::from_slice(&[script.into_bytes(), Vec::new()])]),
+      vec![ParsedEnvelope {
+        payload: inscription("text/plain;charset=utf-8", "ord"),
+        ..default()
+      }]
+    );
+  }
+
+  #[test]
+  fn multiple_bip110_envelopes_in_a_single_witness() {
+    let script = script::Builder::new()
+      .push_slice(PROTOCOL_ID)
+      .push_slice([])
+      .push_slice(b"foo")
+      .push_opcode(opcodes::all::OP_2DROP)
+      .push_opcode(opcodes::all::OP_DROP)
+      .push_slice(PROTOCOL_ID)
+      .push_slice([])
+      .push_slice(b"bar")
+      .push_opcode(opcodes::all::OP_2DROP)
+      .push_opcode(opcodes::all::OP_DROP)
+      .into_script();
+
+    assert_eq!(
+      parse(&[Witness::from_slice(&[script.into_bytes(), Vec::new()])]),
+      vec![
+        ParsedEnvelope {
+          payload: Inscription {
+            body: Some(b"foo".to_vec()),
+            ..default()
+          },
+          ..default()
+        },
+        ParsedEnvelope {
+          payload: Inscription {
+            body: Some(b"bar".to_vec()),
+            ..default()
+          },
+          offset: 1,
+          ..default()
+        }
+      ]
+    );
+  }
+
+  #[test]
+  fn bip110_envelope_with_pushnum_opcodes() {
+    let script = script::Builder::new()
+      .push_slice(PROTOCOL_ID)
+      .push_opcode(opcodes::all::OP_PUSHNUM_1)
+      .push_slice(b"text/plain;charset=utf-8")
+      .push_slice([])
+      .push_slice(b"foo")
+      .push_opcode(opcodes::all::OP_2DROP)
+      .push_opcode(opcodes::all::OP_2DROP)
+      .push_opcode(opcodes::all::OP_DROP)
+      .into_script();
+
+    assert_eq!(
+      parse(&[Witness::from_slice(&[script.into_bytes(), Vec::new()])]),
+      vec![ParsedEnvelope {
+        payload: inscription("text/plain;charset=utf-8", "foo"),
+        pushnum: true,
+        ..default()
+      }]
+    );
+  }
+
+  #[test]
+  fn bip110_and_legacy_envelopes_in_a_single_witness() {
+    let script = script::Builder::new()
+      .push_opcode(opcodes::OP_FALSE)
+      .push_opcode(opcodes::all::OP_IF)
+      .push_slice(PROTOCOL_ID)
+      .push_slice([1])
+      .push_slice(b"text/plain;charset=utf-8")
+      .push_slice([])
+      .push_slice(b"foo")
+      .push_opcode(opcodes::all::OP_ENDIF)
+      .push_slice(PROTOCOL_ID)
+      .push_slice([1])
+      .push_slice(b"text/plain;charset=utf-8")
+      .push_slice([])
+      .push_slice(b"bar")
+      .push_opcode(opcodes::all::OP_2DROP)
+      .push_opcode(opcodes::all::OP_2DROP)
+      .push_opcode(opcodes::all::OP_DROP)
+      .into_script();
+
+    assert_eq!(
+      parse(&[Witness::from_slice(&[script.into_bytes(), Vec::new()])]),
+      vec![
+        ParsedEnvelope {
+          payload: inscription("text/plain;charset=utf-8", "foo"),
+          ..default()
+        },
+        ParsedEnvelope {
+          payload: inscription("text/plain;charset=utf-8", "bar"),
+          offset: 1,
+          ..default()
+        }
+      ]
     );
   }
 }
