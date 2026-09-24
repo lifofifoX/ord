@@ -748,6 +748,13 @@ impl Index {
   }
 
   pub fn export(&self, filename: &String, include_addresses: bool) -> Result {
+    if include_addresses && !self.index_addresses {
+      eprintln!(
+        "warning: exporting addresses without `--index-addresses` fetches every transaction over \
+         RPC, which is very slow",
+      );
+    }
+
     let mut writer = BufWriter::new(File::create(filename)?);
     let rtx = self.database.begin_read()?;
 
@@ -1240,6 +1247,20 @@ impl Index {
     self.client.get_block_header(&hash).into_option()
   }
 
+  pub fn block_header_at_height(&self, height: Height) -> Result<Option<Header>> {
+    let height = height.n();
+
+    let rtx = self.database.begin_read()?;
+
+    let height_to_block_header = rtx.open_table(HEIGHT_TO_BLOCK_HEADER)?;
+
+    let Some(guard) = height_to_block_header.get(height)? else {
+      return Ok(None);
+    };
+
+    Ok(Some(Header::load(*guard.value())))
+  }
+
   pub fn block_header_info(&self, hash: BlockHash) -> Result<Option<GetBlockHeaderResult>> {
     self.client.get_block_header_info(&hash).into_option()
   }
@@ -1261,6 +1282,10 @@ impl Index {
 
   pub fn get_block_by_hash(&self, hash: BlockHash) -> Result<Option<Block>> {
     self.client.get_block(&hash).into_option()
+  }
+
+  pub fn get_block_hex(&self, hash: BlockHash) -> Result<Option<String>> {
+    self.client.get_block_hex(&hash).into_option()
   }
 
   pub fn get_collections_paginated(
@@ -1882,8 +1907,8 @@ impl Index {
       let sat_ranges = utxo_entry.value().parse(self).sat_ranges();
 
       let mut offset = 0;
-      for chunk in sat_ranges.chunks_exact(11) {
-        let (start, end) = SatRange::load(chunk.try_into().unwrap());
+      for chunk in sat_ranges.as_chunks::<11>().0 {
+        let (start, end) = SatRange::load(*chunk);
         if start <= sat && sat < end {
           return Ok(Some(SatPoint {
             outpoint: Entry::load(*outpoint.value()),
@@ -1922,8 +1947,8 @@ impl Index {
       let sat_ranges = utxo_entry.value().parse(self).sat_ranges();
 
       let mut offset = 0;
-      for sat_range in sat_ranges.chunks_exact(11) {
-        let (start, end) = SatRange::load(sat_range.try_into().unwrap());
+      for sat_range in sat_ranges.as_chunks::<11>().0 {
+        let (start, end) = SatRange::load(*sat_range);
 
         if end > range_start && start < range_end {
           let overlap_start = start.max(range_start);
@@ -1967,8 +1992,10 @@ impl Index {
             .value()
             .parse(self)
             .sat_ranges()
-            .chunks_exact(11)
-            .map(|chunk| SatRange::load(chunk.try_into().unwrap()))
+            .as_chunks::<11>()
+            .0
+            .iter()
+            .map(|chunk| SatRange::load(*chunk))
             .collect::<Vec<(u64, u64)>>()
         }),
     )
