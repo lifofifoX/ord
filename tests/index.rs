@@ -1,4 +1,12 @@
 use super::*;
+use redb::{Database, TableDefinition};
+
+#[derive(serde::Deserialize)]
+struct CleanupOutput {
+  rows_before: u64,
+  rows_after: u64,
+  table_deleted: bool,
+}
 
 #[test]
 fn run_is_an_alias_for_update() {
@@ -89,4 +97,53 @@ fn export_inscription_number_to_id_tsv() {
     entries.get(&2).unwrap(),
     &ord::Object::InscriptionId(inscription),
   );
+}
+
+#[test]
+fn cleanup_pre_jubilee_filtered_shadow_data_is_idempotent() {
+  let core = mockcore::spawn();
+  core.mine_blocks(1);
+
+  let tempdir = TempDir::new().unwrap();
+
+  let index_path = tempdir.path().join("foo.redb");
+
+  CommandBuilder::new(format!("--index {} index update", index_path.display()))
+    .core(&core)
+    .run_and_extract_stdout();
+
+  const OUTPOINT_TO_FILTERED_INSCRIPTION_DATA: TableDefinition<&[u8; 36], &[u8]> =
+    TableDefinition::new("OUTPOINT_TO_FILTERED_INSCRIPTION_DATA");
+
+  let database = Database::builder().open(&index_path).unwrap();
+  let wtx = database.begin_write().unwrap();
+  wtx
+    .open_table(OUTPOINT_TO_FILTERED_INSCRIPTION_DATA)
+    .unwrap()
+    .insert(&[0; 36], &[1_u8, 2, 3][..])
+    .unwrap();
+  wtx.commit().unwrap();
+  drop(database);
+
+  let first_cleanup = CommandBuilder::new(format!(
+    "--index {} index cleanup --pre-jubilee-filtered",
+    index_path.display()
+  ))
+  .core(&core)
+  .run_and_deserialize_output::<CleanupOutput>();
+
+  assert!(first_cleanup.table_deleted);
+  assert!(first_cleanup.rows_before > 0);
+  assert_eq!(first_cleanup.rows_after, 0);
+
+  let second_cleanup = CommandBuilder::new(format!(
+    "--index {} index cleanup --pre-jubilee-filtered",
+    index_path.display()
+  ))
+  .core(&core)
+  .run_and_deserialize_output::<CleanupOutput>();
+
+  assert!(second_cleanup.table_deleted);
+  assert_eq!(second_cleanup.rows_before, 0);
+  assert_eq!(second_cleanup.rows_after, 0);
 }
