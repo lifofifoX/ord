@@ -90,7 +90,7 @@ pub trait Api {
   fn send_raw_transaction(
     &self,
     tx: String,
-    maxfeerate: Option<()>,
+    maxfeerate: Option<Value>,
     maxburnamount: Option<f64>,
   ) -> Result<String, jsonrpc_core::Error>;
 
@@ -124,6 +124,9 @@ pub trait Api {
     verbose: Option<bool>,
     blockhash: Option<BlockHash>,
   ) -> Result<Value, jsonrpc_core::Error>;
+
+  #[rpc(name = "getmempoolentry")]
+  fn get_mempool_entry(&self, txid: Txid) -> Result<Value, jsonrpc_core::Error>;
 
   #[rpc(name = "listunspent")]
   fn list_unspent(

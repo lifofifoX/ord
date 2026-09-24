@@ -1,0 +1,174 @@
+#!/usr/bin/env bash
+
+# This script is idempotent.
+
+set -euxo pipefail
+
+CHAIN=$1
+DOMAIN=$2
+BRANCH=$3
+COMMIT=$4
+SKIP_BOOT_ORD=${5:-false}
+REVISION="ord-$BRANCH-$COMMIT"
+
+export DEBIAN_FRONTEND=noninteractive
+
+touch ~/.hushlogin
+hostnamectl set-hostname "$DOMAIN"
+
+apt-get install --yes \
+  acl \
+  clang \
+  curl \
+  libsqlite3-dev \
+  libssl-dev \
+  locales-all \
+  pkg-config \
+  ufw \
+  vim \
+  tor \
+  nginx
+
+apt-get remove --yes --auto-remove
+
+ufw default allow outgoing
+ufw default deny incoming
+ufw allow http
+ufw allow ssh
+
+case $CHAIN in
+  main)
+    COOKIE_FILE_DIR=/var/lib/bitcoind
+    CSP_ORIGIN="$DOMAIN"
+    ufw allow 8333
+    ;;
+  regtest)
+    COOKIE_FILE_DIR=/var/lib/bitcoind/regtest
+    CSP_ORIGIN="$DOMAIN"
+    ufw allow 18444
+    ;;
+  signet)
+    COOKIE_FILE_DIR=/var/lib/bitcoind/signet
+    CSP_ORIGIN="$DOMAIN"
+    ufw allow 38333
+    ;;
+  test)
+    COOKIE_FILE_DIR=/var/lib/bitcoind/testnet3
+    CSP_ORIGIN="$DOMAIN"
+    ufw allow 18333
+    ;;
+  testnet4)
+    COOKIE_FILE_DIR=/var/lib/bitcoind/testnet4
+    CSP_ORIGIN="$DOMAIN"
+    ufw allow 48333
+    ;;
+  *)
+    echo "Unknown chain: $CHAIN"
+    exit 1
+    ;;
+esac
+
+mkdir -p \
+  /etc/systemd/system/bitcoind.service.d \
+  /etc/systemd/system/ord.service.d
+
+OVERRIDE=/etc/systemd/system/ord.service.d/override.conf
+
+echo '[Service]' > "$OVERRIDE"
+echo "Environment=CHAIN=$CHAIN" >> "$OVERRIDE"
+echo "Environment=CSP_ORIGIN=$CSP_ORIGIN" >> "$OVERRIDE"
+
+cp "$OVERRIDE" /etc/systemd/system/bitcoind.service.d/override.conf
+
+sed -i -E 's/#?PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
+sshd -t
+systemctl restart sshd
+
+ufw --force enable
+
+version=30.0
+if ! bitcoind --version | grep "$version"; then
+  wget \
+    -O bitcoin.tar.gz \
+    "https://bitcoincore.org/bin/bitcoin-core-$version/bitcoin-$version-x86_64-linux-gnu.tar.gz"
+
+  tar \
+    -xzvf bitcoin.tar.gz \
+    -C /usr/local/bin \
+    --strip-components 2 \
+    "bitcoin-$version/bin/bitcoin-cli" "bitcoin-$version/bin/bitcoind"
+
+  bitcoind --version
+fi
+
+if [[ ! -e ~/.cargo/env ]]; then
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+fi
+
+source ~/.cargo/env
+rustup update stable
+
+cargo build --release
+install --backup target/release/ord /usr/local/bin/ord
+
+id --user bitcoin || useradd --system bitcoin
+id --user ord || useradd --system ord
+
+mkdir -p /home/bitcoin
+chown bitcoin:bitcoin /home/bitcoin
+chmod 755 /home/bitcoin
+usermod -d /home/bitcoin bitcoin
+usermod -s /bin/bash bitcoin
+
+cp deploy/tsunami/torrc /etc/tor/torrc
+chmod 644 /etc/tor/torrc
+usermod -aG debian-tor bitcoin
+systemctl restart tor
+
+cp deploy/bitcoind.service /etc/systemd/system/
+
+mkdir -p /etc/bitcoin
+cp deploy/tsunami/bitcoin.conf /etc/bitcoin/bitcoin.conf
+chown bitcoin:bitcoin /etc/bitcoin/bitcoin.conf
+
+mkdir -p /var/lib/bitcoind
+if [[ ! -e ~/.bitcoin/bitcoin.conf ]]; then
+  mkdir -p ~/.bitcoin
+  ln -s /etc/bitcoin/bitcoin.conf ~/.bitcoin/bitcoin.conf
+  chown -R bitcoin:bitcoin ~/.bitcoin
+fi
+
+systemctl daemon-reload
+systemctl enable bitcoind
+systemctl restart bitcoind
+
+while [[ ! -f $COOKIE_FILE_DIR/.cookie ]]; do
+  echo "Waiting for bitcoind..."
+  sleep 1
+done
+
+setfacl -m ord:x /var/lib/bitcoind
+setfacl -m ord:x "$COOKIE_FILE_DIR"
+setfacl -dm ord:r "$COOKIE_FILE_DIR"
+setfacl -m ord:r "$COOKIE_FILE_DIR/.cookie"
+
+journalctl --unit ord --vacuum-time 1s
+
+CHAIN_ESCAPED=$(printf '%s' "$CHAIN" | sed -e 's/[\\/&]/\\&/g')
+CSP_ORIGIN_ESCAPED=$(printf '%s' "$CSP_ORIGIN" | sed -e 's/[\\/&]/\\&/g')
+sed \
+  -e "s/__CHAIN__/$CHAIN_ESCAPED/g" \
+  -e "s/__CSP_ORIGIN__/$CSP_ORIGIN_ESCAPED/g" \
+  deploy/tsunami/ord.service \
+  > /etc/systemd/system/ord.service
+mkdir -p /var/lib/ord
+chown -R ord:ord /var/lib/ord
+
+if [[ "$SKIP_BOOT_ORD" == "true" ]]; then
+  echo "Skipping booting ord server. Start it after loading index data."
+else
+  echo "Booting ord server..."
+  systemctl daemon-reload
+  systemctl enable ord
+  systemctl restart ord
+fi

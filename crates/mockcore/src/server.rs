@@ -510,14 +510,9 @@ impl Api for Server {
   fn send_raw_transaction(
     &self,
     tx: String,
-    maxfeerate: Option<()>,
+    _maxfeerate: Option<Value>,
     maxburnamount: Option<f64>,
   ) -> Result<String, jsonrpc_core::Error> {
-    assert!(
-      maxfeerate.is_none(),
-      "sendrawtransaction: maxfeerate is not supported"
-    );
-
     let tx: Transaction = deserialize(&hex::decode(tx).unwrap()).unwrap();
 
     let burnt = tx
@@ -746,6 +741,21 @@ impl Api for Server {
         None => Err(Self::not_found()),
       }
     }
+  }
+
+  fn get_mempool_entry(&self, txid: Txid) -> Result<Value, jsonrpc_core::Error> {
+    let state = self.state();
+    let tx = state
+      .mempool
+      .iter()
+      .find(|tx| tx.compute_txid() == txid)
+      .ok_or_else(Self::not_found)?;
+
+    Ok(serde_json::json!({
+      "txid": txid,
+      "vsize": tx.vsize(),
+      "weight": tx.weight().to_wu(),
+    }))
   }
 
   fn list_unspent(

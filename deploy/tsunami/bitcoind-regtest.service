@@ -1,0 +1,12 @@
+[Unit]
+Description=Bitcoin daemon (regtest helper)
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/ord env --proxy https://__ORD_PROXY_DOMAIN__ /home/bitcoin/regtest
+User=bitcoin
+Group=bitcoin
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

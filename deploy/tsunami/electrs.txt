@@ -1,0 +1,26 @@
+- Checkout electrs in /home/bitcoin
+
+$ su bitcoin
+$ mkdir -p ~/.bitcoin
+$ cd ~/.bitcoin
+$ ln -s /etc/bitcoin/bitcoin.conf bitcoin.conf
+
+- Install Rust for bitcoin user
+
+$ cd
+$ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+
+- Build and install electrs
+
+$ git clone https://github.com/mempool/electrs.git
+$ cd electrs
+$ cargo run --release --bin electrs -- -vvvv --daemon-dir /var/lib/bitcoind
+
+- Install and start service
+
+# cp /home/bitcoin/electrs/target/release/electrs /usr/local/bin/electrs
+# chown bitcoin:bitcoin /usr/local/bin/electrs
+# cp deploy/tsunami/electrs.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable electrs
+systemctl restart electrs
